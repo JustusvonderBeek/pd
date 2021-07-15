@@ -1,0 +1,107 @@
+/* The commandline options */
+pub struct Options {
+    pub local_port: u32,
+    pub remote_port: u32,
+    pub server: bool,
+    pub hostname: String,
+    pub p: u32,
+    pub q: u32,
+    pub filename: Vec<String>,
+}
+
+fn default_options() -> Options {
+    let set = Options {
+        local_port: 5001,
+        remote_port: 5001,
+        server: false,
+        hostname: String::from("127.0.0.1"),
+        p: 0,
+        q: 0,
+        filename: vec![],
+    };
+    set
+}
+
+fn print_help() {
+    println!("RFT - Robust File Transfer:");
+    println!("Usage (Server):");
+    println!("rft [-s] [-t <port>] [-p <p>] [-q <q>]");
+    println!("Usage (Client):");
+    println!("rft <host> [-t <port>] [-p <p>] [-q <q>] <file> ...");
+    println!("Options:");
+    println!("-s: servermode: accept incoming requests from any host. Operates in client mode if “–s” is not specified.");
+    println!("-t: specify the port number to use (default: 5001");
+    println!("-p, -q: specify the loss probabilities for the Markov chain model. If only one is specified, p=q is assumed; if neither is specified no loss is assumed.");
+    println!("<file> the name(s) of the file(s) to fetch.");
+}
+
+pub fn parse_cmdline(args : Vec<String>) -> Option<Options> {
+    if args.len() < 2 {
+        println!("The given arguments does not contain any file!");
+    } else {
+        let mut settings = default_options();
+        let mut i = 1; // Skip the path
+        while i < args.len() {
+            let str = args.get(i);
+            match str {
+                Some(str) => {
+                    println!("String: {}", str); // DEBUG
+                    match str.as_str() {
+                        "-h" => {
+                            print_help();
+                            std::process::exit(0);
+                        },
+                        "-s" => {
+                            settings.server = true; // Enabling server mode
+                        },
+                        "-t" => {
+                            // Expecting a port to operate on
+                            match args.get(i + 1) {
+                                Some(port) => {
+                                    settings.local_port = port.parse::<u32>().unwrap();
+                                    i += 1;
+                                },
+                                None => {
+                                    println!("Expected a port but got nothing!"); 
+                                    std::process::exit(1);
+                                },
+                            }
+                        },
+                        "-p" => {
+                            match args.get(i + 1) {
+                                Some(probability) => {
+                                    settings.p = probability.parse::<u32>().unwrap();
+                                    i += 1;
+                                },
+                                None => {
+                                    println!("Expected a probability but got nothing!"); 
+                                    std::process::exit(1);
+                                },
+                            }
+                        },
+                        "-q" => {
+                            match args.get(i + 1) {
+                                Some(probability) => {
+                                    settings.q = probability.parse::<u32>().unwrap();
+                                    i += 1;
+                                },
+                                None => {
+                                    println!("Expected a probability but got nothing!"); 
+                                    std::process::exit(1);
+                                },
+                            }
+                        },
+                        _ => {
+                            println!("File: {}", str);
+                            settings.filename.push(str.to_string());
+                        },
+                    }
+                },
+                None => println!("Out of bounds!"),
+            }
+            i += 1;
+        }
+        return Some(settings)
+    }
+    None
+}
