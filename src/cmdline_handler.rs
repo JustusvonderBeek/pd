@@ -42,62 +42,40 @@ pub fn parse_cmdline(args : Vec<String>) -> Option<Options> {
         let mut settings = default_options();
         let mut i = 1; // Skip the path
         while i < args.len() {
-            let str = args.get(i);
-            match str {
-                Some(str) => {
-                    println!("String: {}", str); // DEBUG
-                    match str.as_str() {
-                        "-h" => {
-                            print_help();
-                            std::process::exit(0);
-                        },
-                        "-s" => {
-                            settings.server = true; // Enabling server mode
-                        },
-                        "-t" => {
-                            // Expecting a port to operate on
-                            match args.get(i + 1) {
-                                Some(port) => {
-                                    settings.local_port = port.parse::<u32>().unwrap();
-                                    i += 1;
-                                },
-                                None => {
-                                    println!("Expected a port but got nothing!"); 
-                                    std::process::exit(1);
-                                },
-                            }
-                        },
-                        "-p" => {
-                            match args.get(i + 1) {
-                                Some(probability) => {
-                                    settings.p = probability.parse::<u32>().unwrap();
-                                    i += 1;
-                                },
-                                None => {
-                                    println!("Expected a probability but got nothing!"); 
-                                    std::process::exit(1);
-                                },
-                            }
-                        },
-                        "-q" => {
-                            match args.get(i + 1) {
-                                Some(probability) => {
-                                    settings.q = probability.parse::<u32>().unwrap();
-                                    i += 1;
-                                },
-                                None => {
-                                    println!("Expected a probability but got nothing!"); 
-                                    std::process::exit(1);
-                                },
-                            }
-                        },
-                        _ => {
-                            println!("File: {}", str);
-                            settings.filename.push(str.to_string());
-                        },
-                    }
+            let str = args.get(i).unwrap();
+            match str.as_str() {
+                "-h" => {
+                    print_help();
+                    std::process::exit(0);
                 },
-                None => println!("Out of bounds!"),
+                "-s" => {
+                    settings.server = true; // Enabling server mode
+                },
+                "-t" => {
+                    // Expecting a port to operate on
+                    let port = args.get(i + 1).expect("Expected a port but got nothing!");
+                    settings.local_port = port.parse::<u32>().unwrap();
+                    i += 1;
+                },
+                "-p" => {
+                    let p = args.get(i + 1).expect("Expected a probability p but got nothing!");
+                    settings.p = p.parse::<u32>().unwrap();
+                    i += 1;
+                },
+                "-q" => {
+                    let q = args.get(i + 1).expect("Expected a probability q but got nothing!");
+                    settings.q = q.parse::<u32>().unwrap();
+                    i += 1;
+                },
+                _ => {
+                    // TODO: Allow for more than one file
+                    if settings.server {
+                        println!("Cannot transfer a file in server mode!");
+                        return None;
+                    }
+                    println!("File: {}", str);
+                    settings.filename.push(str.to_string());
+                },
             }
             i += 1;
         }
