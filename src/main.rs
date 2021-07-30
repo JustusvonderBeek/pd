@@ -7,39 +7,52 @@ extern crate simplelog;
 use std::{time, env, io};
 use simplelog::*;
 use std::fs::File;
+use std::fs;
 use std::error::Error;
 use std::net::UdpSocket;
 use std::collections::HashSet;
 use byteorder::BigEndian;
 use crate::cmdline_handler::*;
 
+enum PacketType {
+    Request,
+    Response,
+    Data,
+    Ack,
+    Metadata,
+    Error
+}
+
 
 fn main() -> std::io::Result<()> {
-    init_logger();
+
     // println!("Hello, world!");
     let args: Vec<String> = env::args().collect();
     let opt = parse_cmdline(args).expect("Failed to parse the commandline");
 
+    init_logger(&opt);
+    test_functions();
+
     if opt.server {
-        start_server(opt).expect("Error on server!");
+        start_server(&opt);
     } else {
-        start_client(opt);
+        start_client(&opt);
     }
 
     Ok(())
 }
 
-fn start_server(opt : Options) -> std::io::Result<()> {
+fn start_server(opt : &Options) {
+
     info!("Starting the server...");
 
     // Listening on any socket...
     // TODO: Bind on given address
     let sock = UdpSocket::bind("0.0.0.0:5001").unwrap();
-    info!("Server is listening on {}", sock.local_addr()?);
+    info!("Server is listening on {}", sock.local_addr().unwrap());
 
     // Used to keep track of active connections and IDs
     let mut conn_exists = HashSet::new();
-
 
     let mut buf : [u8; 1500] = [0; 1500];
     let mut index = 0;
@@ -70,22 +83,47 @@ fn start_server(opt : Options) -> std::io::Result<()> {
         }
     } 
     
-    Ok(())
 }
 
-fn handling_requests() {
-
+fn test_functions() {
+    handling_requests(PacketType::Request);
 }
 
-fn start_client(opt : Options) {
+fn handling_requests(p_type : PacketType) {
+    match p_type  {
+        PacketType::Request => {
+            debug!("Requst packet");
+            let file = fs::read("Test.txt").unwrap();
+            debug!("Länge: {}\n{:?}", file.len(), file);
+
+        },
+        PacketType::Response => {
+
+        },
+        PacketType::Data => {
+
+        },
+        PacketType::Ack => {
+
+        },
+        PacketType::Metadata => {
+
+        },
+        PacketType::Error => {
+
+        }
+    }
+}
+
+fn start_client(opt : &Options) {
     // TODO: Implement client side
 }
 
-fn init_logger() {
+fn init_logger(opt : &Options) {
     CombinedLogger::init(
         vec![
             TermLogger::new(LevelFilter::Debug, Config::default(), TerminalMode::Mixed, ColorChoice::Auto),
-            WriteLogger::new(LevelFilter::Trace, Config::default(), File::create("tbd.log").unwrap()),
+            WriteLogger::new(LevelFilter::Trace, Config::default(), File::create(opt.logfile.to_string()).unwrap()),
         ]
     ).unwrap();
 
