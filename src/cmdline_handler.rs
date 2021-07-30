@@ -37,7 +37,7 @@ fn print_help() {
 
 pub fn parse_cmdline(args : Vec<String>) -> Option<Options> {
     if args.len() < 2 {
-        println!("The given arguments does not contain any file!");
+        error!("The given arguments does not contain any file!");
     } else {
         let mut settings = default_options();
         let mut i = 1; // Skip the path
@@ -70,10 +70,10 @@ pub fn parse_cmdline(args : Vec<String>) -> Option<Options> {
                 _ => {
                     // TODO: Allow for more than one file
                     if settings.server {
-                        println!("Cannot transfer a file in server mode!");
+                        error!("Cannot transfer a file in server mode!");
                         return None;
                     }
-                    println!("File: {}", str);
+                    info!("File: {}", str);
                     settings.filename.push(str.to_string());
                 },
             }
