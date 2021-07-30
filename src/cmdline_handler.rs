@@ -15,7 +15,7 @@ fn default_options() -> Options {
         local_port: 5001,
         remote_port: 5001,
         server: false,
-        hostname: String::from("127.0.0.1"),
+        hostname: String::from("0.0.0.0"),
         p: 0,
         q: 0,
         filename: vec![],
