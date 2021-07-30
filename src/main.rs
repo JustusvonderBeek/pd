@@ -47,15 +47,16 @@ fn start_server(opt : &Options) {
 
     info!("Starting the server...");
 
-    // Listening on any socket...
-    // TODO: Bind on given address
-    let sock = UdpSocket::bind("0.0.0.0:5001").unwrap();
+    let mut hostname = String::from(&opt.hostname);
+    hostname.push_str(":");
+    hostname.push_str(&opt.local_port.to_string());
+    let sock = UdpSocket::bind(hostname).unwrap();
     info!("Server is listening on {}", sock.local_addr().unwrap());
 
     // Used to keep track of active connections and IDs
     let mut conn_exists = HashSet::new();
 
-    let mut buf : [u8; 1500] = [0; 1500];
+    let mut buf : [u8; 1300] = [0; 1300];
     let mut index = 0;
 
     loop {
@@ -87,16 +88,16 @@ fn start_server(opt : &Options) {
 }
 
 fn test_functions() {
-    handling_requests(PacketType::Request);
+    handling_requests(PacketType::Request, &vec![1;1]);
 
 }
 
-fn handling_requests(p_type : PacketType) {
+fn handling_requests(p_type : PacketType, packet : &Vec<u8>) {
+
     match p_type  {
         PacketType::Request => {
             debug!("Requst packet");
             let file = fs::read("Test.txt").unwrap();
-            // debug!("Länge: {}\n{:?}\n{}", file.len(), file, String::from_utf8_lossy(&file));
             debug!("{}", pretty_hex(&file));
         },
         PacketType::Response => {
