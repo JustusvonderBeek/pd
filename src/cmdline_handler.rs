@@ -7,6 +7,7 @@ pub struct Options {
     pub p: u32,
     pub q: u32,
     pub filename: Vec<String>,
+    pub logfile: String,
 }
 
 fn default_options() -> Options {
@@ -18,6 +19,7 @@ fn default_options() -> Options {
         p: 0,
         q: 0,
         filename: vec![],
+        logfile: String::from("tbd.log"),
     };
     set
 }
