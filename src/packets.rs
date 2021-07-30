@@ -113,14 +113,14 @@ impl ResponsePacket {
 #[derive(Clone, Debug)]
 pub struct DataPacket {
     connection_id : u32,     // Best way to store 24 Bit ?
-    block_id : u32,       // 64 Bit
+    block_id : u32,       // 32 Bit
     sequence_id : u16,
     fields : u8,
     data : Vec<u8>
 }
 
 impl DataPacket {
-    pub fn serialize(connection_id : u32, block_id : u64, sequence_id : u16, fields: u8, data : Vec<u8>) -> Vec<u8> {
+    pub fn serialize(connection_id : u32, block_id : u32, sequence_id : u16, fields: u8, data : Vec<u8>) -> Vec<u8> {
         if data.len() >= 1220{
             println!("Tried to send {} Bytes of data. Can not fit into one package", data.len());
             return Vec::new();
@@ -195,5 +195,81 @@ impl AckPacket {
             length : BigEndian::read_u16(&buffer[10..12]),
             sid_list : sid_list
         } )
+    }
+}
+
+/// Representation of the Metadata Packet in memory
+#[derive(Clone, Debug)]
+pub struct MetadataPacket{
+    connection_id : u32,     // on the wire just 24 Bits
+    block_id : u32,
+    fields : u8,
+    new_block_size : u16
+}
+
+impl MetadataPacket {
+    /// Creates a byte representation of a metadata packet with given parameters in an u8 vector
+    pub fn serialize(connection_id : u32, block_id : u32, fields: u8, new_block_size : u16) -> Vec<u8> {
+        let con_id_u8s = connection_id.to_be_bytes();
+        let mut con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
+        let mut buffer : Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE as usize);    // Memory usage might be higher with that capacity
+        buffer.extend_from_slice(&con_id);
+        buffer.extend_from_slice(&block_id.to_be_bytes());
+        buffer.push(fields);
+        buffer.extend_from_slice(&new_block_size.to_be_bytes());
+        return buffer;
+    }
+
+    /// Parses a slice of u8 received over the network and returns a Metadata packet or Failure
+    pub fn deserialize(buffer : &[u8]) -> Result<MetadataPacket, &'static str> {
+        if buffer.len() != 10{
+            println!("Size was {}, expected 10.", buffer.len());
+            return Err("Malformed metadata packet could not be parsed.");
+        }
+        let con_id : [u8; 4] = [0, buffer[0], buffer[1], buffer[2]];
+        Ok (MetadataPacket {
+            connection_id : u32::from_be_bytes(con_id),
+            block_id : BigEndian::read_u32(&buffer[3..7]),
+            fields : buffer[7],
+            new_block_size : BigEndian::read_u16(&buffer[8..10])
+        })
+    }
+}
+
+/// Representation of the Error Packet in memory
+#[derive(Clone, Debug)]
+pub struct ErrorPacket{
+    connection_id : u32,     // on the wire just 24 Bits
+    block_id : u32,
+    fields : u8,
+    error_code : u32
+}
+
+impl ErrorPacket {
+    /// Creates a byte representation of a error packet with given parameters in an u8 vector
+    pub fn serialize(connection_id : u32, block_id : u32, fields: u8, error_code : u32) -> Vec<u8> {
+        let con_id_u8s = connection_id.to_be_bytes();
+        let mut con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
+        let mut buffer : Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE as usize);    // Memory usage might be higher with that capacity
+        buffer.extend_from_slice(&con_id);
+        buffer.extend_from_slice(&block_id.to_be_bytes());
+        buffer.push(fields);
+        buffer.extend_from_slice(&error_code.to_be_bytes());
+        return buffer;
+    }
+
+    /// Parses a slice of u8 received over the network and returns a error packet or Failure
+    pub fn deserialize(buffer : &[u8]) -> Result<ErrorPacket, &'static str> {
+        if buffer.len() != 12{
+            println!("Size was {}, expected 12.", buffer.len());
+            return Err("Malformed error packet");
+        }
+        let con_id : [u8; 4] = [0, buffer[0], buffer[1], buffer[2]];
+        Ok (ErrorPacket {
+            connection_id : u32::from_be_bytes(con_id),
+            block_id : BigEndian::read_u32(&buffer[3..7]),
+            fields : buffer[7],
+            error_code : BigEndian::read_u32(&buffer[8..12])
+        })
     }
 }
