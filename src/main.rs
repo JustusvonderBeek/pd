@@ -8,6 +8,7 @@ use std::{time, env, io};
 use simplelog::*;
 use std::fs::File;
 use std::fs;
+use pretty_hex::*;
 use std::error::Error;
 use std::net::UdpSocket;
 use std::collections::HashSet;
@@ -87,6 +88,7 @@ fn start_server(opt : &Options) {
 
 fn test_functions() {
     handling_requests(PacketType::Request);
+
 }
 
 fn handling_requests(p_type : PacketType) {
@@ -94,8 +96,8 @@ fn handling_requests(p_type : PacketType) {
         PacketType::Request => {
             debug!("Requst packet");
             let file = fs::read("Test.txt").unwrap();
-            debug!("Länge: {}\n{:?}", file.len(), file);
-
+            // debug!("Länge: {}\n{:?}\n{}", file.len(), file, String::from_utf8_lossy(&file));
+            debug!("{}", pretty_hex(&file));
         },
         PacketType::Response => {
 
@@ -127,5 +129,5 @@ fn init_logger(opt : &Options) {
         ]
     ).unwrap();
 
-    info!("Logger initilized");
+    debug!("Logger initilized");
 }
