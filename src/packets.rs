@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use byteorder::{BigEndian, ByteOrder};
+use std::convert::AsMut;
 
 const MAX_PACKET_SIZE : u64 = 1300;
 
@@ -16,7 +17,7 @@ pub struct RequestPacket {
 impl RequestPacket {
     pub fn serialize(connection_id : u32, byte_offset : u64, fields : u8, flow_window : u32, file_name : std::string::String) -> Vec<u8>{
         let con_id_u8s = connection_id.to_be_bytes();
-        let mut con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
+        let con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
         let mut buffer : Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE as usize);    // Start capacity needs to be adapted to Request packet's size
         buffer.extend_from_slice(&con_id);
         buffer.extend_from_slice(&byte_offset.to_be_bytes());
@@ -40,7 +41,7 @@ impl RequestPacket {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ResponsePacket {
-    pub connection_id : [u8; 3],     // Best way to store 24 Bit ?
+    pub connection_id : u32,     // Best way to store 24 Bit ?
     pub block_id : u32,       // 32 Bit
     pub fields : u8,
     pub file_hash : [u8; 32],        // 256 Bit Hash
@@ -50,21 +51,32 @@ pub struct ResponsePacket {
 impl ResponsePacket {
     pub fn serialize(connection_id : u32, block_id : u32, fields : u8, file_hash : [u8; 32], file_size : u64) -> Vec<u8>{
         let con_id_u8s = connection_id.to_be_bytes();
-        // Serialize via serde
-       let response = ResponsePacket {
-            connection_id : [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]],
-            block_id : block_id,
-            fields: fields,
-            file_hash : file_hash,
-            file_size : file_size
-        };
-        let buffer = bincode::serialize(&response).unwrap();
+        let con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
+        let mut buffer : Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE as usize);
+        buffer.extend_from_slice(&con_id);
+        buffer.extend_from_slice(&block_id.to_be_bytes());
+        buffer.push(fields);
+        buffer.extend_from_slice(&file_hash);
+        buffer.extend(&file_size.to_be_bytes());
+        
         return buffer;
     }
 
-    pub fn deserialize(buffer : &[u8]) -> ResponsePacket {
-        let des : ResponsePacket = bincode::deserialize(&buffer).unwrap();
-        return des;
+    pub fn deserialize(buffer : &[u8]) -> Result<ResponsePacket, &'static str> {
+        if buffer.len() != 48 {
+            debug!("Could not parse Response Packet. Had invalid length for parsing {:x} expected 48.", buffer.len());
+            return Err("Parsing ACK Packet");
+        }
+        let con_id : [u8; 4] = [0, buffer[0], buffer[1], buffer[2]];
+        let mut file_hash : [u8; 32] = [0; 32];
+        file_hash[..32].copy_from_slice(&buffer[8..41]);    // Real sketchy needs testing
+        Ok(ResponsePacket {
+            connection_id : u32::from_be_bytes(con_id),
+            block_id : BigEndian::read_u32(&buffer[3..7]),
+            fields : buffer[7],
+            file_hash : file_hash,
+            file_size : BigEndian::read_u64(&buffer[41..49]),
+        })
     }
 }
 
@@ -84,7 +96,7 @@ impl DataPacket {
             return Vec::new();
         }
         let con_id_u8s = connection_id.to_be_bytes();
-        let mut con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
+        let con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
         let mut buffer : Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE as usize);
         buffer.extend_from_slice(&con_id);
         buffer.extend_from_slice(&block_id.to_be_bytes());
@@ -121,7 +133,7 @@ impl AckPacket {
     pub fn serialize(connection_id : u32, block_id : u32, fields: u8, flow_window : u16, length : u16, sid_list : Vec<u32>) -> Vec<u8> {
         // TODO: Add a check if the sid_list is too long here
         let con_id_u8s = connection_id.to_be_bytes();
-        let mut con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
+        let con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
         let mut buffer : Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE as usize);    // Memory usage might be higher with that capacity
         buffer.extend_from_slice(&con_id);
         buffer.extend_from_slice(&block_id.to_be_bytes());
@@ -169,7 +181,7 @@ impl MetadataPacket {
     /// Creates a byte representation of a metadata packet with given parameters in an u8 vector
     pub fn serialize(connection_id : u32, block_id : u32, fields: u8, new_block_size : u16) -> Vec<u8> {
         let con_id_u8s = connection_id.to_be_bytes();
-        let mut con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
+        let con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
         let mut buffer : Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE as usize);    // Memory usage might be higher with that capacity
         buffer.extend_from_slice(&con_id);
         buffer.extend_from_slice(&block_id.to_be_bytes());
@@ -207,7 +219,7 @@ impl ErrorPacket {
     /// Creates a byte representation of a error packet with given parameters in an u8 vector
     pub fn serialize(connection_id : u32, block_id : u32, fields: u8, error_code : u32) -> Vec<u8> {
         let con_id_u8s = connection_id.to_be_bytes();
-        let mut con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
+        let con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
         let mut buffer : Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE as usize);    // Memory usage might be higher with that capacity
         buffer.extend_from_slice(&con_id);
         buffer.extend_from_slice(&block_id.to_be_bytes());
