@@ -3,6 +3,15 @@ use byteorder::{BigEndian, ByteOrder};
 
 const MAX_PACKET_SIZE : u64 = 1300;
 
+#[derive(Debug)]
+pub enum PacketType {
+    Request,
+    Response,
+    Data,
+    Ack,
+    Metadata,
+    Error
+}
 
 #[derive(Clone, Debug)]
 pub struct RequestPacket {
