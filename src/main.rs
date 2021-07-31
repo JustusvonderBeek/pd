@@ -18,6 +18,7 @@ use byteorder::BigEndian;
 use rand::prelude::*;
 use crate::cmdline_handler::*;
 
+#[derive(Debug)]
 enum PacketType {
     Request,
     Response,
@@ -94,40 +95,27 @@ fn start_server(opt : &Options) {
 }
 
 fn test_functions() {
-    handling_requests(PacketType::Request, &vec![1;1]);
-    handling_requests(PacketType::Data, &vec![1;1]);
+    handling_server_request(PacketType::Request, &vec![1;1]);
+    handling_client_request(PacketType::Data, &vec![1;1]);
 }
 
-fn handling_requests(p_type : PacketType, packet : &Vec<u8>) {
-
+fn handling_server_request(p_type : PacketType, packet : &Vec<u8>) {
     match p_type  {
         PacketType::Request => {
             debug!("Requst packet");
             let file = fs::read("Test.txt").unwrap();
             debug!("{}", pretty_hex(&file));
         },
-        PacketType::Response => {
-            // Connection setup (we ack that we got the request and the file parameters)
-        },
-        PacketType::Data => {
-            // Transfer the next chunk of data to the client
-            let mut rnd = rand::thread_rng();
-            let mut nums : Vec<u8> = (0..100).collect();
-            nums.shuffle(&mut rnd);
-            debug!("{}", pretty_hex(&nums));
-            let mut output = OpenOptions::new().append(true).create(true).open("output.txt").expect("Failed to open file output.txt");
-            output.write_all(&nums).expect("Failed to append to file");
-        },
         PacketType::Ack => {
             // Got an ack from the client
-            
-        },
-        PacketType::Metadata => {
-            // This type of packet is never received by us !
+
         },
         PacketType::Error => {
             // Closing the connection and freeing state
             // conn_exists.remove(1);
+        },
+        _ => {
+            error!("The given packet type {:?} is not expected on the server side!", p_type);
         }
     }
 }
@@ -141,6 +129,31 @@ fn start_client(opt : &Options) {
     // 3. Ack the data and process the metadata
 
     // 4. Close the connection after success
+}
+
+fn handling_client_request(p_type : PacketType, packet : &Vec<u8>) {
+    match p_type {
+        PacketType::Response => {
+
+        },
+        PacketType::Data => {
+            let mut rnd = rand::thread_rng();
+            let mut nums : Vec<u8> = (0..100).collect();
+            nums.shuffle(&mut rnd);
+            debug!("{}", pretty_hex(&nums));
+            let mut output = OpenOptions::new().append(true).create(true).open("output.txt").expect("Failed to open file output.txt");
+            output.write_all(&nums).expect("Failed to append to file");
+        },
+        PacketType::Metadata => {
+            
+        },
+        PacketType::Error => {
+
+        },
+        _ => {
+            error!("The given packet type {:?} is not expected on the client side!", p_type);
+        }
+    }
 }
 
 fn init_logger(opt : &Options) {
