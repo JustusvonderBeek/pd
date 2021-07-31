@@ -30,10 +30,10 @@ impl RequestPacket {
         let con_id : [u8; 4] = [0, buffer[0], buffer[1], buffer[2]];
         RequestPacket {
             connection_id : u32::from_be_bytes(con_id),
-            byte_offset : BigEndian::read_u64(&buffer[3..7]),
-            fields : buffer[7],
-            flow_window : BigEndian::read_u32(&buffer[8..12]),
-            file_name : String::from_utf8_lossy(&buffer[12..]).to_string(),     // Might be really expensive
+            byte_offset : BigEndian::read_u64(&buffer[3..11]),
+            fields : buffer[11],
+            flow_window : BigEndian::read_u32(&buffer[12..16]),
+            file_name : String::from_utf8_lossy(&buffer[16..]).to_string(),     // Might be really expensive
         }
     }
 }
