@@ -35,7 +35,7 @@ impl TBDClient {
         
         let mut buf : [u8; 1300] = [0; 1300];
         let (addr, len) = sock.recv_from(&mut buf).expect("Failed to receive response from server!");
-    
+        debug!("Received response: {}", pretty_hex(&buf));
         // TODO: Setup connection params
     
         // 3. Receive data in the loop
