@@ -6,6 +6,8 @@ use std::io::Write;
 use std::fs::OpenOptions;
 use std::fs;
 use rand::Rng;
+use sha2::{Sha256, Digest};
+use std::convert::TryInto;
 use crate::cmdline_handler::Options;
 use crate::packets::*;
 
@@ -49,10 +51,6 @@ impl TBDServer {
         let sock = UdpSocket::bind(hostname).unwrap();
         info!("Server is listening on {}", sock.local_addr().unwrap());
     
-        // Used to keep track of active connections and IDs
-        let mut buf : [u8; DEBUG_PACKET_SIZE] = [0; DEBUG_PACKET_SIZE]; // Just 100 B to get a more consice packet overview in the hexdump
-        let mut index = 0;
-    
         loop {
             // 1. Reading a new packet (because this is not threaded block here)
 
@@ -62,7 +60,7 @@ impl TBDServer {
     
             if check_packet_type(&packet, PacketType::Request) {
                 // New client
-                let packet = match RequestPacket::deserialize(&buf) {
+                let packet = match RequestPacket::deserialize(&packet) {
                     Ok(p) => p,
                     Err(e) => {
                         warn!("Failed to deserialize request packet: {}", e);
@@ -76,9 +74,30 @@ impl TBDServer {
                 self.states.insert(connection_id, ConnectionState::Transfer);
 
                 // Generate the response + load the file
+                let filename = String::from(packet.file_name);
+                let mut file = match fs::read(&filename) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        warn!("Failed to read in the file {}\n{}", filename, e);
+                        // TODO: Fail, should we send back an error?
+                        continue;
+                    },
+                };
+                // Compute the checksum
+                let mut hasher = Sha256::new();
+                hasher.update(file);
+                let hash = hasher.finalize();
+                debug!("Generated hash: {}", pretty_hex(&hash));
+                let filehash : [u8;32] = match hash.as_slice().try_into() {
+                    Ok(h) => h,
+                    Err(e) => {
+                        warn!("Failed to convert hash: {}", e);
+                        self.remove_state(connection_id);
+                        continue;
+                    }
+                };
 
-                let test_arr :[u8; 32] = [0;32];
-                let resp = ResponsePacket::serialize(connection_id, 0, 0, test_arr, 0);
+                let resp = ResponsePacket::serialize(connection_id, 0, 0, filehash, 0);
                 match sock.send_to(&resp, addr) {
                     Ok(size) => debug!("Sent {} bytes to {}", size, addr),
                     Err(_) => {
@@ -90,7 +109,6 @@ impl TBDServer {
             } else {
                 // Existing transfer
                 if check_packet_type(&packet, PacketType::Error) {
-                    // TODO: Error handling
                     let err = match ErrorPacket::deserialize(&packet) {
                         Ok(p) => p,
                         Err(e) => {
@@ -124,80 +142,6 @@ impl TBDServer {
 
                 error!("Expected an acknowledgment or error but got something else!\n{}", pretty_hex(&packet));
             }
-    
-            // 3. Parsing the packet into a struct
-            
-            // TODO: Make an universal function for this
-            // TODO: Work with this packet
-
-            // if conn_id == 0 { // NEW CLIENT
-            //     // In this case the client is new
-            //     info!("New client from {} connected", addr);
-            //     let r = self.packet_handling(&PacketType::Request, &buf.to_vec());
-            //     let data = match r {
-            //         Ok(v) => v,
-            //         Err(_) => {
-            //             warn!("Failed to process client request!");
-            //             continue;
-            //         }
-            //     };
-
-            //     index = (index + 1) % 10;
-            //     // Create a new connectionID
-            //     let conn_id = 10;
-            //     conn_exists.insert(conn_id);
-            //     let r = states.insert(conn_id, PacketType::Response);
-            //     match r {
-            //         None => debug!("Inserted {} with state {:?} into map!", conn_id, PacketType::Response),
-            //         Some(_) => debug!("Updated {} to {:?}", conn_id, PacketType::Response)
-            //     }
-
-            //     debug!("Returing: {}", pretty_hex(&data));
-            //     let r = sock.send_to(&data, addr);
-            //     match r {
-            //         Ok(size) => debug!("Sent {}", size),
-            //         Err(e) => {
-            //             warn!("Failed to sent: {}", e); 
-            //             continue;
-            //         },
-            //     }
-            //     // 4.1. Handling a new client (Setup)
-            // } else { // EXISTING CLIENT
-            //     // 2. Handling the packet
-            //     // TODO: Check if the given packet is correct
-                
-            //     let ex = conn_exists.contains(&conn_id);
-            //     if !ex {
-            //         warn!("The given Connection ID {} does not exist!", conn_id);
-            //         continue;
-            //     } 
-
-            //     let r = states.get(&conn_id);
-            //     let state = match r {
-            //         Some(s) => s,
-            //         None => { 
-            //             warn!("Could not find state for client {}", &conn_id); 
-            //             continue; 
-            //         },
-            //     };
-            //     debug!("Found state {:?} for client {}", state, conn_id);
-
-            //     let r = self.packet_handling(state, &buf.to_vec());
-            //     let data = match r {
-            //         Ok(d) => d,
-            //         Err(e) => { 
-            //             warn!("Failed to handle packet for client {}", conn_id); 
-            //             continue; 
-            //         },
-            //     };
-            //     // let check = packets::check(&buf, PacketType::Request);
-                
-            //     // 3. Parse the given packet
-            //     // TODO: Deserialize method
-
-            //    // 4.2. Handling an old client (Probably Ack or Metadata)
-
-            // }
         } 
         
     }
