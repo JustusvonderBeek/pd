@@ -93,11 +93,11 @@ impl ResponsePacket {
 
 #[derive(Clone, Debug)]
 pub struct DataPacket {
-    connection_id : u32,     // Best way to store 24 Bit ?
-    fields : u8,
-    block_id : u32,       // 32 Bit
-    sequence_id : u16,
-    data : Vec<u8>
+    pub connection_id : u32,     // Best way to store 24 Bit ?
+    pub fields : u8,
+    pub block_id : u32,       // 32 Bit
+    pub sequence_id : u16,
+    pub data : Vec<u8>
 }
 
 impl DataPacket {
@@ -182,10 +182,10 @@ impl AckPacket {
 /// Representation of the Metadata Packet in memory
 #[derive(Clone, Debug)]
 pub struct MetadataPacket{
-    connection_id : u32,     // on the wire just 24 Bits
-    fields : u8,
-    block_id : u32,
-    new_block_size : u16
+    pub connection_id : u32,     // on the wire just 24 Bits
+    pub fields : u8,
+    pub block_id : u32,
+    pub new_block_size : u16
 }
 
 impl MetadataPacket {
