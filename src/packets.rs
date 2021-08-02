@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use byteorder::{BigEndian, ByteOrder};
 use std::convert::AsMut;
+use std::error::Error;
 
 const MAX_PACKET_SIZE : u64 = 1300;
 
@@ -252,6 +253,17 @@ impl ErrorPacket {
             error_code : BigEndian::read_u32(&buffer[8..12])
         })
     }
+}
+
+pub fn get_connection_id(packet : &Vec<u8>) -> Result<u32, ()> {
+    if packet.len() < 4 {
+        warn!("Packet is malformed. Length is too short");
+    } else {
+        let con_id : [u8; 4] = [0, packet[0], packet[1], packet[2]];
+        let connection_id = u32::from_be_bytes(con_id);
+        return Ok(connection_id);
+    }
+    return Err(());
 }
 
 pub fn get_packet_type(packet : &Vec<u8>) -> PacketType {
