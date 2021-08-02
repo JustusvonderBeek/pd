@@ -37,6 +37,8 @@ impl TBDClient {
         let (addr, len) = sock.recv_from(&mut buf).expect("Failed to receive response from server!");
         debug!("Received response: {}", pretty_hex(&buf));
         // TODO: Setup connection params
+        let res = ResponsePacket::deserialize(&buf).expect("Failed to deserialized packet");
+        
     
         // 3. Receive data in the loop
         let (addr, len) = sock.recv_from(&mut buf).expect("Failed to receive data from server");
