@@ -16,6 +16,7 @@ pub enum PacketType {
     None,
 }
 
+/// Representation of the Request Packet in memory
 #[derive(Clone, Debug)]
 pub struct RequestPacket {
     pub connection_id : u32,     // Best way to store 24 Bit ?
@@ -26,6 +27,7 @@ pub struct RequestPacket {
 }
 
 impl RequestPacket {
+    /// Creates a byte representation of a request packet with given parameters in an u8 vector
     pub fn serialize(connection_id : u32, byte_offset : u64, fields : u8, flow_window : u32, file_name : std::string::String) -> Vec<u8>{
         let con_id_u8s = connection_id.to_be_bytes();
         let con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
@@ -38,18 +40,29 @@ impl RequestPacket {
         return buffer;
     }
     
-    pub fn deserialize(buffer : &[u8]) -> RequestPacket{
+    /// Parses a slice of u8 received over the network and returns a request packet or Failure
+    pub fn deserialize(buffer : &[u8]) -> Result<RequestPacket, &'static str> {
+        if buffer.len() > 279 {
+            debug!("Could not parse Request. Had invalid length for parsing {:x} expected less than 279.", buffer.len());
+            return Err("Parsing Request Packet failed.");
+        }
         let con_id : [u8; 4] = [0, buffer[0], buffer[1], buffer[2]];
-        RequestPacket {
-            connection_id : u32::from_be_bytes(con_id),
+        let connection_id = u32::from_be_bytes(con_id);
+        if connection_id != 0 {
+            debug!("Could not parse Request. ConnectionID was {:x} expected to be 0.", connection_id);
+            return Err("Parsing Request Packet failed. Invalid ID.");
+        }
+        Ok(RequestPacket {
+            connection_id : connection_id,
             fields : buffer[3],
             byte_offset : BigEndian::read_u64(&buffer[4..12]),
             flow_window : BigEndian::read_u32(&buffer[12..16]),
             file_name : String::from_utf8_lossy(&buffer[16..]).to_string(),     // Might be really expensive
-        }
+        })
     }
 }
 
+/// Representation of the Response Packet in memory
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ResponsePacket {
     pub connection_id : u32,     // Best way to store 24 Bit ?
@@ -60,6 +73,7 @@ pub struct ResponsePacket {
 }
 
 impl ResponsePacket {
+    /// Creates a byte representation of a response packet with given parameters in an u8 vector
     pub fn serialize(connection_id : u32, block_id : u32, fields : u8, file_hash : [u8; 32], file_size : u64) -> Vec<u8>{
         let con_id_u8s = connection_id.to_be_bytes();
         let con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
@@ -73,6 +87,7 @@ impl ResponsePacket {
         return buffer;
     }
 
+    /// Parses a slice of u8 received over the network and returns a response packet or Failure
     pub fn deserialize(buffer : &[u8]) -> Result<ResponsePacket, &'static str> {
         if buffer.len() != 48 {
             debug!("Could not parse Response Packet. Had invalid length for parsing {:x} expected 48.", buffer.len());
@@ -91,6 +106,7 @@ impl ResponsePacket {
     }
 }
 
+/// Representation of the Data Packet in memory
 #[derive(Clone, Debug)]
 pub struct DataPacket {
     pub connection_id : u32,     // Best way to store 24 Bit ?
@@ -101,6 +117,7 @@ pub struct DataPacket {
 }
 
 impl DataPacket {
+    /// Creates a byte representation of a data packet with given parameters in an u8 vector
     pub fn serialize(connection_id : u32, block_id : u32, sequence_id : u16, fields: u8, data : Vec<u8>) -> Vec<u8> {
         if data.len() >= 1220{
             println!("Tried to send {} Bytes of data. Can not fit into one package", data.len());
@@ -117,18 +134,25 @@ impl DataPacket {
         return buffer;
     }
 
-    pub fn deserialize(buffer : &[u8]) -> DataPacket {
+    /// Parses a slice of u8 received over the network and returns a data packet or Failure
+    pub fn deserialize(buffer : &[u8]) -> Result<DataPacket, &'static str> {
         let con_id : [u8; 4] = [0, buffer[0], buffer[1], buffer[2]];
-        DataPacket {
+        let seq_id: u16 = BigEndian::read_u16(&buffer[8..10]);
+        if seq_id == 0 {
+            debug!("Could not parse Data Packet. Had invalid SequenceID {:x}, must not be 0.", seq_id);
+            return Err("Parsing Data Packet");
+        }
+        Ok(DataPacket {
             connection_id : u32::from_be_bytes(con_id),
             fields : buffer[3],
             block_id : BigEndian::read_u32(&buffer[4..8]),
-            sequence_id : BigEndian::read_u16(&buffer[8..10]),
+            sequence_id : seq_id,
             data : buffer[10..].to_vec(),
-        }
+        })
     }
 }
 
+/// Representation of the ACK Packet in memory
 #[derive(Clone, Debug)]
 pub struct AckPacket {
     pub connection_id : u32,     // on the wire just 24 Bits
@@ -141,6 +165,7 @@ pub struct AckPacket {
 
 
 impl AckPacket {
+    /// Creates a byte representation of a ACK packet with given parameters in an u8 vector
     pub fn serialize(connection_id : u32, block_id : u32, fields: u8, flow_window : u16, length : u16, sid_list : Vec<u32>) -> Vec<u8> {
         // TODO: Add a check if the sid_list is too long here
         let con_id_u8s = connection_id.to_be_bytes();
@@ -157,6 +182,7 @@ impl AckPacket {
         return buffer;
     }
 
+    /// Parses a slice of u8 received over the network and returns a ACK packet or Failure
     pub fn deserialize(buffer : &[u8]) -> Result<AckPacket, &'static str> {
         let con_id : [u8; 4] = [0, buffer[0], buffer[1], buffer[2]];
         // Check if list is divisible by 4
