@@ -5,6 +5,7 @@ use pretty_hex::*;
 use std::io::Write;
 use std::fs::OpenOptions;
 use std::fs;
+use rand::Rng;
 use crate::cmdline_handler::Options;
 use crate::packets::*;
 
@@ -21,6 +22,7 @@ enum ConnectionState {
 pub struct TBDServer {
     options : Options,
     conn_ids : HashSet<u32>,
+    states : HashMap<u32, ConnectionState>,
 }
 
 impl TBDServer {
@@ -28,6 +30,7 @@ impl TBDServer {
         TBDServer {
             options : opt,
             conn_ids : HashSet::new(),
+            states : HashMap::new(),
         }
     }
 
@@ -47,9 +50,6 @@ impl TBDServer {
         info!("Server is listening on {}", sock.local_addr().unwrap());
     
         // Used to keep track of active connections and IDs
-        let mut conn_exists : HashSet<u32, _> = HashSet::new();
-        let mut states : HashMap<u32, ConnectionState> = HashMap::new();
-
         let mut buf : [u8; DEBUG_PACKET_SIZE] = [0; DEBUG_PACKET_SIZE]; // Just 100 B to get a more consice packet overview in the hexdump
         let mut index = 0;
     
@@ -62,17 +62,43 @@ impl TBDServer {
     
             if check_packet_type(&packet, PacketType::Request) {
                 // New client
-                let packet = RequestPacket::deserialize(&buf);
+                let packet = match RequestPacket::deserialize(&buf) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!("Failed to deserialize request packet: {}", e);
+                        // 
+                        continue;
+                    },
+                };
 
+                let connection_id = self.generate_conn_id();
+                self.conn_ids.insert(connection_id);
+                self.states.insert(connection_id, ConnectionState::Transfer);
+
+                // Generate the response + load the file
+                let resp = ResponsePacket::serialize(connection_id, 0, 0, vec![0;32], 0);
+                match sock.send_to(&resp, addr) {
+                    Ok(size) => debug!("Sent {} bytes to {}", size, addr),
+                    Err(_) => {
+                        warn!("Failed to transfer data to {}", addr);
+                        self.remove_state(connection_id);
+                    } 
+                }
+                continue;
             } else {
                 // Existing transfer
                 if check_packet_type(&packet, PacketType::Error) {
                     // TODO: Error handling
-                    let err = ErrorPacket::deserialize(&packet).unwrap();
+                    let err = match ErrorPacket::deserialize(&packet) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            warn!("Failed to deserialize error packet: {}", e);
+                            continue;
+                        },
+                    };
                     warn!("Got an error from {}", addr);
                     warn!("Error Code: {}", err.error_code);
-                    conn_exists.remove(&err.connection_id);
-                    states.remove(&err.connection_id);
+                    self.remove_state(err.connection_id);
                     continue;
                 }
 
@@ -90,7 +116,7 @@ impl TBDServer {
                 if check_packet_type(&packet, PacketType::Ack) {
                     let ack = AckPacket::deserialize(&packet).unwrap();
                     // TODO: Check for the state, if the transfer is complete and so on
-                    let state = states.get(&ack.connection_id);
+                    let state = self.states.get(&ack.connection_id);
                     // if state == ConnectionState::
                 }
 
@@ -191,11 +217,32 @@ impl TBDServer {
         Ok((buf.to_vec(), addr))
     }
 
+    fn generate_conn_id(&self) -> u32 {
+        let rnd = rand::thread_rng();
+        loop {
+            let val = rnd.gen_range(0..2^24-1);
+            if !self.conn_ids.contains(&val) {
+                return val;
+            }
+        }
+    }
+
+    fn remove_state(&self, connection_id : u32) {
+        self.conn_ids.remove(&connection_id);
+        self.states.remove(&connection_id);
+    }
+
     fn packet_handling(&self, p_type : &PacketType, packet : &Vec<u8>) -> Result<Vec<u8>, ()> {
         match p_type  {
             PacketType::Request => {
                 debug!("Requst packet");
-                let req = RequestPacket::deserialize(&packet);
+                let req = match RequestPacket::deserialize(&packet) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!("Failed to deserialize request packet: {}", e);
+                        return Err(());
+                    }
+                };
                 info!("Client requested file: {}", &req.file_name);
                 let file = fs::read("Test.txt").unwrap();
     
