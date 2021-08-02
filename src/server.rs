@@ -34,11 +34,11 @@ impl TBDServer {
         }
     }
 
-    pub fn start(&self) -> std::io::Result<()> {
+    pub fn start(&mut self) -> std::io::Result<()> {
         self.server()
     }
 
-    fn server(&self) -> std::io::Result<()> {
+    fn server(&mut self) -> std::io::Result<()> {
 
         info!("Starting the server...");
     
@@ -76,7 +76,9 @@ impl TBDServer {
                 self.states.insert(connection_id, ConnectionState::Transfer);
 
                 // Generate the response + load the file
-                let resp = ResponsePacket::serialize(connection_id, 0, 0, vec![0;32], 0);
+
+                let test_arr :[u8; 32] = [0;32];
+                let resp = ResponsePacket::serialize(connection_id, 0, 0, test_arr, 0);
                 match sock.send_to(&resp, addr) {
                     Ok(size) => debug!("Sent {} bytes to {}", size, addr),
                     Err(_) => {
@@ -200,7 +202,7 @@ impl TBDServer {
         
     }
 
-    fn next_packet(&self, sock : &UdpSocket) -> Result<(Vec<u8>, SocketAddr), ()> {
+    fn next_packet(&mut self, sock : &UdpSocket) -> Result<(Vec<u8>, SocketAddr), ()> {
         let mut buf : [u8; DEBUG_PACKET_SIZE] = [0; DEBUG_PACKET_SIZE];
         debug!("Waiting for new incoming packet");
         let f = sock.recv_from(&mut buf);
@@ -217,8 +219,8 @@ impl TBDServer {
         Ok((buf.to_vec(), addr))
     }
 
-    fn generate_conn_id(&self) -> u32 {
-        let rnd = rand::thread_rng();
+    fn generate_conn_id(&mut self) -> u32 {
+        let mut rnd = rand::thread_rng();
         loop {
             let val = rnd.gen_range(0..2^24-1);
             if !self.conn_ids.contains(&val) {
@@ -227,7 +229,7 @@ impl TBDServer {
         }
     }
 
-    fn remove_state(&self, connection_id : u32) {
+    fn remove_state(&mut self, connection_id : u32) {
         self.conn_ids.remove(&connection_id);
         self.states.remove(&connection_id);
     }
