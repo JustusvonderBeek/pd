@@ -22,10 +22,10 @@ fn main() -> std::io::Result<()> {
     init_logger(&opt);
 
     if opt.server {
-        let server = TBDServer::create(opt);
+        let mut server = TBDServer::create(opt);
         return server.start();
     } else {
-        let client = TBDClient::create(opt);
+        let mut client = TBDClient::create(opt);
         return client.start();
     }
 }
