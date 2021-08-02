@@ -11,7 +11,8 @@ pub enum PacketType {
     Data,
     Ack,
     Metadata,
-    Error
+    Error,
+    None,
 }
 
 #[derive(Clone, Debug)]
@@ -129,12 +130,12 @@ impl DataPacket {
 
 #[derive(Clone, Debug)]
 pub struct AckPacket {
-    connection_id : u32,     // on the wire just 24 Bits
-    block_id : u32,       // 32 Bit
-    fields : u8,
-    flow_window : u16,
-    length : u16,
-    sid_list : Vec<u32>
+    pub connection_id : u32,     // on the wire just 24 Bits
+    pub block_id : u32,       // 32 Bit
+    pub fields : u8,
+    pub flow_window : u16,
+    pub length : u16,
+    pub sid_list : Vec<u32>
 }
 
 
@@ -150,7 +151,7 @@ impl AckPacket {
         buffer.extend_from_slice(&flow_window.to_be_bytes());
         buffer.extend_from_slice(&length.to_be_bytes());
         for x in sid_list {
-            buffer.extend(x.to_be_bytes());
+            buffer.extend(&x.to_be_bytes());
         }
         return buffer;
     }
@@ -218,10 +219,10 @@ impl MetadataPacket {
 /// Representation of the Error Packet in memory
 #[derive(Clone, Debug)]
 pub struct ErrorPacket{
-    connection_id : u32,     // on the wire just 24 Bits
+    pub connection_id : u32,     // on the wire just 24 Bits
     block_id : u32,
     fields : u8,
-    error_code : u32
+    pub error_code : u32
 }
 
 impl ErrorPacket {
@@ -250,5 +251,61 @@ impl ErrorPacket {
             fields : buffer[7],
             error_code : BigEndian::read_u32(&buffer[8..12])
         })
+    }
+}
+
+pub fn get_packet_type(packet : &Vec<u8>) -> PacketType {
+    let con_id : [u8; 4] = [0, packet[0], packet[1], packet[2]];
+    let connection_id = u32::from_be_bytes(con_id);
+    if connection_id == 0 {
+        debug!("Connection ID is 0! Request or response packet!");
+        // The packet can only be an request packet
+        return PacketType::Request;
+    }
+
+    // TODO: Constant offset would only work if all packets had the same structure!
+    let flags = packet[7];
+    if flags & 0x80 == 0x80 {
+        return PacketType::Ack;
+    } else if flags & 0x40 == 0x40 {
+        return PacketType::Error;
+    } else if flags % 0x20 == 0x20 {
+        return PacketType::Metadata;
+    } else if flags % 0xE0 == 0 {
+        return PacketType::Data;
+    } else if flags & 0xE0 == 0 {
+
+    }
+    // The rest can only be determined in the current state
+
+    PacketType::None
+}
+
+pub fn check_packet_type(packet : &Vec<u8>, p_type : PacketType) -> bool {
+    let con_id : [u8; 4] = [0, packet[0], packet[1], packet[2]];
+    let connection_id = u32::from_be_bytes(con_id);
+    match p_type {
+        PacketType::Ack => {
+            return packet[7] & 0x80 == 0x80;
+        },
+        PacketType::Data => {
+            return packet[7] & 0xE0 == 0x00;
+        },
+        PacketType::Error => {
+            return packet[7] & 0x40 == 0x40;
+        },
+        PacketType::Metadata => {
+            return packet[7] & 0x20 == 0x20;
+        }
+        PacketType::Request => {
+            return connection_id == 0;
+        },
+        PacketType::Response => {
+            return connection_id != 0 && packet[7] & 0xE0 == 0;
+        }
+        _ => {
+            warn!("The packet type cannot be found!");
+            return false;
+        }
     }
 }
