@@ -89,13 +89,13 @@ impl ResponsePacket {
 
     /// Parses a slice of u8 received over the network and returns a response packet or Failure
     pub fn deserialize(buffer : &[u8]) -> Result<ResponsePacket, &'static str> {
-        if buffer.len() != 48 {
-            debug!("Could not parse Response Packet. Had invalid length for parsing {:x} expected 48.", buffer.len());
-            return Err("Parsing Response Packet");
-        }
+        // if buffer.len() != 48 {
+        //     debug!("Could not parse Response Packet. Had invalid length for parsing {:x} expected 48.", buffer.len());
+        //     return Err("Parsing Response Packet");
+        // }
         let con_id : [u8; 4] = [0, buffer[0], buffer[1], buffer[2]];
         let mut file_hash : [u8; 32] = [0; 32];
-        file_hash[..32].copy_from_slice(&buffer[8..41]);    // Real sketchy needs testing
+        file_hash[..32].copy_from_slice(&buffer[8..40]);    // Real sketchy needs testing
         Ok(ResponsePacket {
             connection_id : u32::from_be_bytes(con_id),
             fields : buffer[3],
