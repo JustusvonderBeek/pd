@@ -28,7 +28,7 @@ pub struct RequestPacket {
 
 impl RequestPacket {
     /// Creates a byte representation of a request packet with given parameters in an u8 vector
-    pub fn serialize(connection_id : u32, byte_offset : u64, fields : u8, flow_window : u32, file_name : std::string::String) -> Vec<u8>{
+    pub fn serialize(connection_id : u32, byte_offset : u64, fields : u8, flow_window : &u32, file_name : &std::string::String) -> Vec<u8>{
         let con_id_u8s = connection_id.to_be_bytes();
         let con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
         let mut buffer : Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE as usize);    // Start capacity needs to be adapted to Request packet's size
@@ -77,7 +77,7 @@ impl ResponsePacket {
     pub fn serialize(connection_id : u32, block_id : u32, fields : u8, file_hash : [u8; 32], file_size : u64) -> Vec<u8>{
         let con_id_u8s = connection_id.to_be_bytes();
         let con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
-        let mut buffer : Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE as usize);
+        let mut buffer : Vec<u8> = Vec::with_capacity(48 as usize);
         buffer.extend_from_slice(&con_id);
         buffer.push(fields);
         buffer.extend_from_slice(&block_id.to_be_bytes());
@@ -91,7 +91,7 @@ impl ResponsePacket {
     pub fn deserialize(buffer : &[u8]) -> Result<ResponsePacket, &'static str> {
         if buffer.len() != 48 {
             debug!("Could not parse Response Packet. Had invalid length for parsing {:x} expected 48.", buffer.len());
-            return Err("Parsing ACK Packet");
+            return Err("Parsing Response Packet");
         }
         let con_id : [u8; 4] = [0, buffer[0], buffer[1], buffer[2]];
         let mut file_hash : [u8; 32] = [0; 32];
