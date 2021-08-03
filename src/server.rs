@@ -47,7 +47,7 @@ impl TBDServer {
         // Bind to given hostname
         let mut hostname = String::from(&self.options.hostname);
         hostname.push_str(":");
-        hostname.push_str(&self.options.local_port.to_string());
+        hostname.push_str(&self.options.server_port.to_string());
         let sock = UdpSocket::bind(hostname).unwrap();
         info!("Server is listening on {}", sock.local_addr().unwrap());
     
@@ -75,7 +75,11 @@ impl TBDServer {
 
                 // Generate the response + load the file
                 let filename = String::from(packet.file_name);
-                let mut file = match fs::read(&filename) {
+                // debug!("Filename: {}", pretty_hex(&filename));
+                // Removing whitespace and 0 bytes from the transfer
+                let filename = filename.trim().trim_matches(char::from(0));
+                debug!("Filename: {}", pretty_hex(&filename));
+                let file = match fs::read(&filename) {
                     Ok(f) => f,
                     Err(e) => {
                         warn!("Failed to read in the file {}\n{}", filename, e);
@@ -83,6 +87,8 @@ impl TBDServer {
                         continue;
                     },
                 };
+                let filesize = file.len() as u64;
+
                 // Compute the checksum
                 let mut hasher = Sha256::new();
                 hasher.update(file);
@@ -97,7 +103,7 @@ impl TBDServer {
                     }
                 };
 
-                let resp = ResponsePacket::serialize(connection_id, 0, 0, filehash, 0);
+                let resp = ResponsePacket::serialize(connection_id, 0, 0, filehash, filesize);
                 match sock.send_to(&resp, addr) {
                     Ok(size) => debug!("Sent {} bytes to {}", size, addr),
                     Err(_) => {
