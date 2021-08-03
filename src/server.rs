@@ -91,7 +91,7 @@ impl TBDServer {
 
                 // Compute the checksum
                 let mut hasher = Sha256::new();
-                hasher.update(file);
+                hasher.update(&file);
                 let hash = hasher.finalize();
                 debug!("Generated hash: {}", pretty_hex(&hash));
                 let filehash : [u8;32] = match hash.as_slice().try_into() {
@@ -111,7 +111,17 @@ impl TBDServer {
                         self.remove_state(connection_id);
                     } 
                 }
-                continue;
+
+                // Start transfer
+                let data = DataPacket::serialize(connection_id, 0, 1, 0, file);
+                match sock.send_to(&data, addr) {
+                    Ok(size) => debug!("Sent {} bytes to {}", size, addr),
+                    Err(_) => {
+                        warn!("Failed to transfer data to {}", addr);
+                        self.remove_state(connection_id);
+                    } 
+                }
+
             } else {
                 // Existing transfer
                 if check_packet_type(&packet, PacketType::Error) {
