@@ -1,8 +1,8 @@
 /* The commandline options */
 #[derive(Clone)]
 pub struct Options {
-    pub local_port: u32,
-    pub remote_port: u32,
+    pub client_port: u32,
+    pub server_port: u32,
     pub server: bool,
     pub hostname: String,
     pub p: u32,
@@ -13,8 +13,8 @@ pub struct Options {
 
 fn default_options() -> Options {
     let set = Options {
-        local_port: 5001,
-        remote_port: 5001,
+        client_port: 6001,
+        server_port: 5001,
         server: false,
         hostname: String::from("127.0.0.1"),
         p: 0,
@@ -28,13 +28,14 @@ fn default_options() -> Options {
 fn print_help() {
     println!("RFT - Robust File Transfer:");
     println!("Usage (Server):");
-    println!("rft [-s] [-t <port>] [-p <p>] [-q <q>]");
+    println!("rft [-s] [-t <port>] [-p <p>] [-q <q>] [-l <logfile>]");
     println!("Usage (Client):");
-    println!("rft <host> [-t <port>] [-p <p>] [-q <q>] <file> ...");
+    println!("rft <host> [-t <port>] [-p <p>] [-q <q>] [-l <logfile>] <file> ...");
     println!("Options:");
     println!("-s: servermode: accept incoming requests from any host. Operates in client mode if “–s” is not specified.");
-    println!("-t: specify the port number to use (default: 5001");
+    println!("-t: specify the port number to use (default: 5001)");
     println!("-p, -q: specify the loss probabilities for the Markov chain model. If only one is specified, p=q is assumed; if neither is specified no loss is assumed.");
+    println!("-l: Specify the path to the logfile. Default: tbd.log");
     println!("<file> the name(s) of the file(s) to fetch.");
 }
 
@@ -45,8 +46,8 @@ pub fn parse_cmdline(args : Vec<String>) -> Option<Options> {
         let mut settings = default_options();
         let mut i = 1; // Skip the path
         while i < args.len() {
-            let str = args.get(i).unwrap();
-            match str.as_str() {
+            let _str = args.get(i).unwrap();
+            match _str.as_str() {
                 "-h" => {
                     print_help();
                     std::process::exit(0);
@@ -57,7 +58,7 @@ pub fn parse_cmdline(args : Vec<String>) -> Option<Options> {
                 "-t" => {
                     // Expecting a port to operate on
                     let port = args.get(i + 1).expect("Expected a port but got nothing!");
-                    settings.local_port = port.parse::<u32>().unwrap();
+                    settings.client_port = port.parse::<u32>().unwrap();
                     i += 1;
                 },
                 "-p" => {
@@ -70,14 +71,19 @@ pub fn parse_cmdline(args : Vec<String>) -> Option<Options> {
                     settings.q = q.parse::<u32>().unwrap();
                     i += 1;
                 },
+                "-l" => {
+                    let logfile = args.get(i + 1).expect("Expected a logfile but got nothing!");
+                    settings.logfile = String::from(logfile);
+                    i += 1;
+                }
                 _ => {
                     // TODO: Allow for more than one file
                     if settings.server {
                         error!("Cannot transfer a file in server mode!");
                         return None;
                     }
-                    info!("File: {}", str);
-                    settings.filename.push(str.to_string());
+                    info!("File: {}", _str);
+                    settings.filename.push(_str.to_string());
                 },
             }
             i += 1;
