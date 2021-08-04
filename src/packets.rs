@@ -243,6 +243,13 @@ impl MetadataPacket {
     }
 }
 
+pub enum ErrorTypes {
+    FileUnavailable,
+    ConnectionRefused,
+    FileModified,
+    Abort,
+}
+
 /// Representation of the Error Packet in memory
 #[derive(Clone, Debug)]
 pub struct ErrorPacket{
@@ -253,6 +260,7 @@ pub struct ErrorPacket{
 }
 
 impl ErrorPacket {
+    // TODO: Remove fields and set the flags according to the protocol
     /// Creates a byte representation of a error packet with given parameters in an u8 vector
     pub fn serialize(connection_id : u32, block_id : u32, fields: u8, error_code : u32) -> Vec<u8> {
         let con_id_u8s = connection_id.to_be_bytes();
