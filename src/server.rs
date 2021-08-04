@@ -2,22 +2,23 @@
 use std::collections::{HashSet, HashMap};
 use std::net::{UdpSocket, SocketAddr};
 use pretty_hex::*;
-use std::io::Write;
-use std::fs::OpenOptions;
+use std::io::Read;
 use std::fs;
+use std::fs::File;
 use rand::Rng;
 use sha2::{Sha256, Digest};
 use std::convert::TryInto;
+use std::{thread, time};
 use crate::cmdline_handler::Options;
 use crate::packets::*;
 
-const DEBUG_PACKET_SIZE : usize = 100;
+const DEBUG_PACKET_SIZE : usize = 1280;
+const DATA_SIZE : usize = 1270;
+const MAX_FLOW_WINDOW : u16 = 100;
 
 enum ConnectionState {
-    Setup,
     Transfer,
     Retransmission,
-    Error,
 }
 
 // TODO: Add the values we need for the operation
@@ -30,9 +31,10 @@ pub struct TBDServer {
 struct ConnectionStore {
     state : ConnectionState,
     block_id : u32,
-    flow_window : u32,
+    flow_window : u16,
     file_size : u64,
-    send : u64,
+    file : String,
+    sent : u64,
     endpoint : SocketAddr,
 }
 
@@ -63,7 +65,7 @@ impl TBDServer {
         loop {
             // 1. Reading a new packet (because this is not threaded block here)
 
-            let (packet, addr) = self.next_packet(&sock).unwrap();
+            let (packet, addr) = self.get_next_packet(&sock).unwrap();
 
             // 2. Check for a new client (according to protocol we always get a new request on resumption)
     
@@ -112,27 +114,25 @@ impl TBDServer {
 
                 // Create the new state
                 let connection_id = self.generate_conn_id();
-                self.create_state(connection_id, filesize, addr);
+                self.create_state(connection_id, filename, filesize, addr);
                 
                 // Construct the answer packet
                 let resp = ResponsePacket::serialize(connection_id, 0, 0, filehash, filesize);
                 match sock.send_to(&resp, addr) {
                     Ok(size) => debug!("Sent {} bytes to {}", size, addr),
-                    Err(_) => {
-                        warn!("Failed to transfer data to {}", addr);
+                    Err(e) => {
+                        warn!("Failed to transfer data to {}: {}", addr, e);
                         self.remove_state(connection_id);
-                    } 
+                        // We won't retry sending the response and it does not really make sense to send an error here
+                        continue;
+                    }
                 }
 
+                // Wait a short period of time
+                self.sleep_n_ms(150);
+
                 // Start transfer
-                let data = DataPacket::serialize(connection_id, 0, 1, 0, file);
-                match sock.send_to(&data, addr) {
-                    Ok(size) => debug!("Sent {} bytes to {}", size, addr),
-                    Err(_) => {
-                        warn!("Failed to transfer data to {}", addr);
-                        self.remove_state(connection_id);
-                    } 
-                }
+                self.send_next_block(&connection_id, &sock);
 
             } else {
                 // Existing transfer
@@ -158,23 +158,64 @@ impl TBDServer {
                     },
                 };
 
-                // handle_retransmission(packet);
+                match self.conn_ids.get(&connection_id) {
+                    Some(_) => {/* left empty*/},
+                    None => {
+                        warn!("Connection with ID {} does not exists", connection_id);
+                        continue;
+                    }
+                };
 
-                // handle_transmission(packet);
                 if check_packet_type(&packet, PacketType::Ack) {
-                    let ack = AckPacket::deserialize(&packet).unwrap();
-                    // TODO: Check for the state, if the transfer is complete and so on
-                    let state = self.states.get(&ack.connection_id);
-                    // if state == ConnectionState::
+                    let ack = match AckPacket::deserialize(&packet) {
+                        Ok(a) => a,
+                        Err(e) => {
+                            error!("Failed to deserialize ack packet: {}", e);
+                            continue;
+                        }
+                    };
+
+                    let mut state = match self.states.get(&ack.connection_id) {
+                        Some(s) => s.to_owned(),
+                        None => {
+                            error!("Connection with ID {} does not exists", ack.connection_id);
+                            continue;
+                        }
+                    };
+
+                    if ack.length > 0 {
+                        self.handle_retransmission();
+                    } else {
+                        // Advance the parameter because of successfull transmission
+                        
+                        // Cap the maximal flow window
+                        let mut flow_window = ack.flow_window;
+                        if ack.flow_window > MAX_FLOW_WINDOW {
+                            flow_window = MAX_FLOW_WINDOW;
+                        }
+
+                        let sent = (DATA_SIZE * state.flow_window as usize) as u64;
+                        let new_state = ConnectionStore {
+                            state : ConnectionState::Transfer,
+                            block_id : state.block_id + 1,
+                            flow_window : flow_window,
+                            file_size : state.file_size,
+                            file : String::from(&state.file),
+                            sent : sent,
+                            endpoint : state.endpoint,
+                        };
+                        self.states.insert(connection_id, new_state);
+                    }
                 }
 
                 error!("Expected an acknowledgment or error but got something else!\n{}", pretty_hex(&packet));
+                // TODO: Should we abort the connection when the packet does not match?
             }
         } 
         
     }
 
-    fn next_packet(&mut self, sock : &UdpSocket) -> Result<(Vec<u8>, SocketAddr), ()> {
+    fn get_next_packet(&mut self, sock : &UdpSocket) -> Result<(Vec<u8>, SocketAddr), ()> {
         let mut buf : [u8; DEBUG_PACKET_SIZE] = [0; DEBUG_PACKET_SIZE];
         debug!("Waiting for new incoming packet");
         let (len, addr) = match sock.recv_from(&mut buf) {
@@ -188,6 +229,69 @@ impl TBDServer {
         debug!("Data:\n{}", pretty_hex(&buf));
 
         Ok((buf.to_vec(), addr))
+    }
+
+    fn send_next_block(&mut self, connection_id : &u32, sock : &UdpSocket) {
+        let connection = match self.states.get(connection_id) {
+            Some(v) => v,
+            None => {
+                error!("For the connection ID: {} no connection is found!", connection_id);
+                return;
+            },
+        };
+        
+        let filename = &connection.file;
+        let mut file = match File::open(filename) {
+            Ok(f) => f,
+            Err(e) => {
+                warn!("Failed to read in the file {}\n{}", filename, e);
+                self.send_error(&sock, &connection.endpoint, ErrorTypes::Abort);
+                return;
+            },
+        };
+
+        let mut buffer_size = DATA_SIZE * connection.flow_window as usize;
+        let dif = (connection.file_size - connection.sent) as usize;
+        // Have to shape this because read_exact does not necessarily read all bytes if the buffer is too large
+        if buffer_size > dif {
+            buffer_size = dif;
+        }
+
+        let mut block_buffer = vec![0; buffer_size];
+        match file.read_exact(&mut block_buffer) {
+            Ok(_) => debug!("Read {} bytes from file: {}", buffer_size, filename),
+            Err(_) => {
+                error!("Failed to read in the next block of file: {}", filename);
+                self.send_error(&sock, &connection.endpoint, ErrorTypes::Abort);
+                return;
+            }
+        };
+
+        // Sending the data packets
+
+        for i in 0..connection.flow_window {
+            // Creating the current packet
+            let mut p_buffer = vec![0; DATA_SIZE];
+            let start = i as usize * DATA_SIZE;
+            let end = start + DATA_SIZE;
+            // TODO: This might be risky. Testing! 
+            p_buffer[..].clone_from_slice(&block_buffer[start..end]);
+
+            let data = DataPacket::serialize(connection_id.to_owned(), connection.block_id, i, 0, p_buffer);
+            match sock.send_to(&data, connection.endpoint) {
+                Ok(s) => debug!("Sent {} bytes to {}", s, connection.endpoint),
+                Err(e) => {
+                    error!("Failed to send data to {}: {}", connection.endpoint, e);
+                }
+            }
+
+            // The changes in the connections stats (flow window, sent, etc.) are only made when the ACK arrives
+        }
+
+    }
+
+    fn handle_retransmission(&mut self) {
+
     }
 
     fn generate_conn_id(&mut self) -> u32 {
@@ -205,14 +309,15 @@ impl TBDServer {
         self.states.remove(&connection_id);
     }
 
-    fn create_state(&mut self, connection_id : u32, size : u64, remote : SocketAddr) {
+    fn create_state(&mut self, connection_id : u32, file_name : &str, size : u64, remote : SocketAddr) {
         self.conn_ids.insert(connection_id);
         let state = ConnectionStore {
-            state : ConnectionState::Setup,
+            state : ConnectionState::Transfer,
             block_id : 0,
             flow_window : 8,
+            file : String::from(file_name),
             file_size : size,
-            send : 0,
+            sent : 0,
             endpoint : remote,
         };
         self.states.insert(connection_id, state);
@@ -230,5 +335,15 @@ impl TBDServer {
             Ok(s) => debug!("Sent {} bytes of error message", s),
             Err(e) => warn!("Failed to send error message: {}", e),
         };
+    }
+
+    fn sleep_n_sec(&self, sec : u64) {
+        let duration = time::Duration::from_secs(sec);
+        thread::sleep(duration);
+    }
+    
+    fn sleep_n_ms(&self, ms : u64) {
+        let duration = time::Duration::from_millis(ms);
+        thread::sleep(duration);
     }
 }
