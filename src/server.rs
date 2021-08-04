@@ -24,7 +24,16 @@ enum ConnectionState {
 pub struct TBDServer {
     options : Options,
     conn_ids : HashSet<u32>,
-    states : HashMap<u32, ConnectionState>,
+    states : HashMap<u32, ConnectionStore>,
+}
+
+struct ConnectionStore {
+    state : ConnectionState,
+    block_id : u32,
+    flow_window : u32,
+    file_size : u64,
+    send : u64,
+    endpoint : SocketAddr,
 }
 
 impl TBDServer {
@@ -41,7 +50,7 @@ impl TBDServer {
     }
 
     fn server(&mut self) -> std::io::Result<()> {
-
+        
         info!("Starting the server...");
     
         // Bind to given hostname
@@ -63,19 +72,17 @@ impl TBDServer {
                 let packet = match RequestPacket::deserialize(&packet) {
                     Ok(p) => p,
                     Err(e) => {
-                        warn!("Failed to deserialize request packet: {}", e);
-                        // 
+                        error!("Failed to deserialize request packet: {}", e);
+                        // We cannot do more than continue and wait for the client to send the next packet; basically ignore the packet
                         continue;
                     },
                 };
 
-                let connection_id = self.generate_conn_id();
-                self.conn_ids.insert(connection_id);
-                self.states.insert(connection_id, ConnectionState::Transfer);
+                // Check for the file status (available, readable)
 
-                // Generate the response + load the file
                 let filename = String::from(packet.file_name);
                 // debug!("Filename: {}", pretty_hex(&filename));
+
                 // Removing whitespace and 0 bytes from the transfer
                 let filename = filename.trim().trim_matches(char::from(0));
                 debug!("Filename: {}", pretty_hex(&filename));
@@ -83,7 +90,7 @@ impl TBDServer {
                     Ok(f) => f,
                     Err(e) => {
                         warn!("Failed to read in the file {}\n{}", filename, e);
-                        // TODO: Fail, should we send back an error?
+                        self.send_error(&sock, &addr, ErrorTypes::FileUnavailable);
                         continue;
                     },
                 };
@@ -98,11 +105,16 @@ impl TBDServer {
                     Ok(h) => h,
                     Err(e) => {
                         warn!("Failed to convert hash: {}", e);
-                        self.remove_state(connection_id);
+                        self.send_error(&sock, &addr, ErrorTypes::Abort);
                         continue;
                     }
                 };
 
+                // Create the new state
+                let connection_id = self.generate_conn_id();
+                self.create_state(connection_id, filesize, addr);
+                
+                // Construct the answer packet
                 let resp = ResponsePacket::serialize(connection_id, 0, 0, filehash, filesize);
                 match sock.send_to(&resp, addr) {
                     Ok(size) => debug!("Sent {} bytes to {}", size, addr),
@@ -165,11 +177,10 @@ impl TBDServer {
     fn next_packet(&mut self, sock : &UdpSocket) -> Result<(Vec<u8>, SocketAddr), ()> {
         let mut buf : [u8; DEBUG_PACKET_SIZE] = [0; DEBUG_PACKET_SIZE];
         debug!("Waiting for new incoming packet");
-        let f = sock.recv_from(&mut buf);
-        let (len, addr) : (usize, SocketAddr) = match f {
+        let (len, addr) = match sock.recv_from(&mut buf) {
             Ok(l) => l,
             Err(e) => {
-                warn!("Failed to {:?}", e); 
+                warn!("Failed to receive packet {:?}", e); 
                 return Err(());
             }
         };
@@ -194,36 +205,30 @@ impl TBDServer {
         self.states.remove(&connection_id);
     }
 
-    fn packet_handling(&self, p_type : &PacketType, packet : &Vec<u8>) -> Result<Vec<u8>, ()> {
-        match p_type  {
-            PacketType::Request => {
-                debug!("Requst packet");
-                let req = match RequestPacket::deserialize(&packet) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        warn!("Failed to deserialize request packet: {}", e);
-                        return Err(());
-                    }
-                };
-                info!("Client requested file: {}", &req.file_name);
-                let file = fs::read("Test.txt").unwrap();
-    
-                debug!("{}", pretty_hex(&file));
-                let data = DataPacket::serialize(1234, 0, 0, 0, file);
-                return Ok(data);
-            },
-            PacketType::Ack => {
-                // Got an ack from the client
-    
-            },
-            PacketType::Error => {
-                // Closing the connection and freeing state
-                // conn_exists.remove(1);
-            },
-            _ => {
-                error!("The given packet type {:?} is not expected on the server side!", p_type);
-            }
-        }
-        Err(())
+    fn create_state(&mut self, connection_id : u32, size : u64, remote : SocketAddr) {
+        self.conn_ids.insert(connection_id);
+        let state = ConnectionStore {
+            state : ConnectionState::Setup,
+            block_id : 0,
+            flow_window : 8,
+            file_size : size,
+            send : 0,
+            endpoint : remote,
+        };
+        self.states.insert(connection_id, state);
+    }
+
+    fn send_error(&self, sock : &UdpSocket, addr : &SocketAddr, e : ErrorTypes) {
+        let val = match e {
+            ErrorTypes::FileUnavailable => 0x01,
+            ErrorTypes::ConnectionRefused => 0x02,
+            ErrorTypes::FileModified => 0x03,
+            ErrorTypes::Abort => 0x04,
+        };
+        let err = ErrorPacket::serialize(0, 0, 0x40, val);
+        match sock.send_to(&err, addr) {
+            Ok(s) => debug!("Sent {} bytes of error message", s),
+            Err(e) => warn!("Failed to send error message: {}", e),
+        };
     }
 }
