@@ -5,6 +5,9 @@ use std::error::Error;
 
 const MAX_PACKET_SIZE : u64 = 1300;
 
+// TODO: In general remove all parameters from the function definitions that are constant anyways (e.g. connection id in a request)
+// TODO: Adapt size of the packets in serialize and deserialize. Either make the all fixed length or match the check for the length with the real length. Currently the program is throwing constant errors.
+
 #[derive(Debug)]
 pub enum PacketType {
     Request,
