@@ -467,7 +467,7 @@ mod tests {
     fn testMetadataPacket(){
         let base : MetadataPacket = MetadataPacket{
             connection_id : 0x2244,
-            fields : 0b10000000,
+            fields : 0b00000000,
             block_id : 0x22334455,
             sequence_id : 0x0,      // Needs to be 0 on connection establishment
             new_block_size : 0x8
