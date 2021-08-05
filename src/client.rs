@@ -24,6 +24,7 @@ pub struct TBDClient {
     block_id : u32,
     file_hash : [u8; 32],
     file_size : u64,
+    server : String,
 }
 
 impl TBDClient {
@@ -36,6 +37,7 @@ impl TBDClient {
             block_id : 0,
             file_hash : [0; 32],
             file_size : 0,
+            server : String::new(),
         }
     }
 
@@ -58,6 +60,7 @@ impl TBDClient {
         let mut servername = String::from(self.options.hostname.trim().trim_matches(char::from(0)));
         servername.push_str(":");
         servername.push_str(&self.options.server_port.to_string());
+        self.server = String::from(&servername);
         // Otherwise we get an error
         let filenames = self.options.filename.clone();
         
@@ -285,10 +288,17 @@ impl TBDClient {
             self.handle_retransmission(&mut window_buffer);
         } else {
             // Things we only do in a successful transmission
-
+            
+            debug!("Received all packets from the current block {}", self.block_id);
+            
             // Should we increase by one?
             self.flow_window += 1;
-            // TODO: Send ACK
+            
+            // Sending the acknowledgment
+            let sid = Vec::new();
+            let ack = AckPacket::serialize(&self.connection_id, &self.block_id, &self.flow_window, &0, &sid);
+            debug!("Created ACK: {}", pretty_hex(&ack));
+            send_data(&ack, &sock, &self.server);
         }
 
         self.block_id += 1;
