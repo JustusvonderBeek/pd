@@ -171,6 +171,8 @@ impl TBDClient {
                     Ok(e) => e,
                     Err(e) => {
                         error!("Failed to deserialize error packet: {}", e);
+                        // Close the connection. Because we cannot do anything more
+                        std::process::exit(1);
                     }
                 };
                 error!("Received an error instead of a data packet: ErrorCode == {}", err.error_code);
