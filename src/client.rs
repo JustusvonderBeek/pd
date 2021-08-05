@@ -2,15 +2,16 @@ use rand::prelude::*;
 use pretty_hex::*;
 use std::io::Write;
 use std::fs::OpenOptions;
-use std::net::UdpSocket;
+use std::net::{UdpSocket, SocketAddr};
 use std::{thread, time};
 use std::result::Result;
 use crate::cmdline_handler::Options;
 use crate::packets::*;
+use crate::net_util::*;
 
-const DEBUG_PACKET_SIZE : usize = 100;
 const PACKET_SIZE : u32 = 1280;
-const DEBUG_TIMEOUT_SEC : u64 = 1;
+const TIMEOUT : u64 = 1;
+const START_FLOW_WINDOW : u32 = 8;
 
 pub struct TBDClient {
     options : Options,
@@ -28,7 +29,7 @@ impl TBDClient {
             options : opt,
             received : 0,
             connection_id : 0,
-            flow_window : 8,
+            flow_window : START_FLOW_WINDOW,
             block_id : 0,
             file_hash : [0; 32],
             file_size : 0,
@@ -58,34 +59,22 @@ impl TBDClient {
         for filename in &self.options.filename {
             // TODO: Add the handling for the continued file request
 
-            // Initial flow window ? How to set?
-            let request = RequestPacket::serialize(0, 0, 0, &self.flow_window, &filename);
+            // The initial flow window is set by the application implementation
+            let request = RequestPacket::serialize(&0, &self.flow_window, &filename);
 
             // Sending the request to the server
-            
-            let size = match sock.send_to(&request, &servername) {
-                Ok(s) => s,
-                Err(e) => {
-                    error!("Failed to send request to server: {}", e);
-                    self.sleep_n(DEBUG_TIMEOUT_SEC);
-                    // TODO: Retry the request, change the control flow
-
-                    continue;
-                }
-            };
-
-            info!("Requested the file: {}", filename);
-            debug!("Sent: {} byte", size);
+            send_data(&request, &sock, &servername);
+            info!("Requested file: {}", filename);
 
             // Receive response from server
-            let mut packet_buffer : [u8; DEBUG_PACKET_SIZE] = [0; DEBUG_PACKET_SIZE];
-            let (addr, len) = sock.recv_from(&mut packet_buffer).expect("Failed to receive response from server!");
+            let mut packet_buffer : [u8; PACKET_SIZE as usize] = [0; PACKET_SIZE as usize];
+            let (len, addr) = self.receive_next(&sock, &mut packet_buffer);
             debug!("Received response: {}", pretty_hex(&packet_buffer));
             
             // Check for errors and correct packet
             if check_packet_type(&packet_buffer.to_vec(), PacketType::Error) {
                 let err = ErrorPacket::deserialize(&packet_buffer).unwrap();
-                warn!("Received and error from the server: {}", err.error_code);
+                warn!("Received and error from the server: ErrorCode == {:x}", err.error_code);
                 continue;
             }
 
@@ -95,7 +84,7 @@ impl TBDClient {
             }
 
             // Handle the response packet
-            let res = match ResponsePacket::deserialize(&packet_buffer) {
+            let res = match ResponsePacket::deserialize(&packet_buffer[..len]) {
                 Ok(r) => r,
                 Err(e) => {
                     warn!("Failed to deserialize response packet: {}", e);
@@ -178,11 +167,26 @@ impl TBDClient {
         Err(())
     }
 
-    fn sleep_n(&self, sec : u64) {
-        let duration = time::Duration::from_secs(sec);
-        thread::sleep(duration);
-    } 
+    fn receive_next(&self, sock : &UdpSocket, mut buf : &mut [u8]) -> (usize, SocketAddr) {
+        loop {
+            match sock.recv_from(&mut buf) {
+                Ok(r) => break r,
+                Err(e) => {
+                    warn!("Failed to receive data: {}", e);
+                    continue;
+                }
+            };
+        }
+    }
 
+    fn receive_next_block() {
+
+    }
+
+    fn handle_retransmission() {
+        
+    }
+    
     fn write_data_to_file(&self, file: &String, data : &Vec<u8>) -> std::io::Result<()> {
         let mut output = match OpenOptions::new().append(true).create(true).open(file) {
             Ok(f) => f,
@@ -193,4 +197,13 @@ impl TBDClient {
         };
         output.write_all(&data)
     }
+    
+    fn decode_error(&self, e : ErrorTypes) {
+        
+    }
+
+    fn sleep_n(&self, sec : u64) {
+        let duration = time::Duration::from_secs(sec);
+        thread::sleep(duration);
+    } 
 }
