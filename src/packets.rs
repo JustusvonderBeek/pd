@@ -25,13 +25,13 @@ pub struct RequestPacket {
     pub connection_id : u32,     // Best way to store 24 Bit ?
     pub fields : u8,
     pub byte_offset : u64,       // 64 Bit
-    pub flow_window : u32,
+    pub flow_window : u16,
     pub file_name : std::string::String     // This always has to be 255 Bytes ! and can't be done with serde in the way our spec wants :(
 }
 
 impl RequestPacket {
     /// Creates a byte representation of a request packet with given parameters in an u8 vector
-    pub fn serialize(byte_offset : &u64, flow_window : &u32, file_name : &std::string::String) -> Vec<u8>{
+    pub fn serialize(byte_offset : &u64, flow_window : &u16, file_name : &std::string::String) -> Vec<u8>{
         let con_id = [0, 0, 0];
         let fields : u8 = 0b00000000;
         let mut buffer : Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE as usize);    // Start capacity needs to be adapted to Request packet's size
@@ -59,8 +59,8 @@ impl RequestPacket {
             connection_id : connection_id,
             fields : buffer[3],
             byte_offset : BigEndian::read_u64(&buffer[4..12]),
-            flow_window : BigEndian::read_u32(&buffer[12..16]),
-            file_name : String::from_utf8_lossy(&buffer[16..]).to_string(),     // Might be really expensive
+            flow_window : BigEndian::read_u16(&buffer[12..14]),
+            file_name : String::from_utf8_lossy(&buffer[14..]).to_string(),     // Might be really expensive
         })
     }
 }
