@@ -123,7 +123,7 @@ pub struct DataPacket {
 impl DataPacket {
     /// Creates a byte representation of a data packet with given parameters in an u8 vector
     pub fn serialize(connection_id : &u32, block_id : &u32, sequence_id : &u16, data : &Vec<u8>) -> Vec<u8> {
-        if data.len() >= 1220{
+        if data.len() > 1270 {
             println!("Tried to send {} Bytes of data. Can not fit into one package", data.len());
             return Vec::new();
         }
@@ -344,22 +344,22 @@ pub fn check_packet_type(packet : &Vec<u8>, p_type : PacketType) -> bool {
     let connection_id = u32::from_be_bytes(con_id);
     match p_type {
         PacketType::Ack => {
-            return packet[7] & 0x80 == 0x80;
+            return packet[3] & 0x80 == 0x80;
         },
         PacketType::Data => {
-            return packet[7] & 0xE0 == 0x00;
+            return packet[3] & 0xE0 == 0x00;
         },
         PacketType::Error => {
-            return packet[7] & 0x40 == 0x40;
+            return packet[3] & 0x40 == 0x40;
         },
         PacketType::Metadata => {
-            return packet[7] & 0x20 == 0x20;
+            return packet[3] & 0x20 == 0x20;
         }
         PacketType::Request => {
             return connection_id == 0;
         },
         PacketType::Response => {
-            return connection_id != 0 && packet[7] & 0xE0 == 0;
+            return connection_id != 0 && packet[3] & 0xE0 == 0;
         }
         _ => {
             warn!("The packet type cannot be found!");
