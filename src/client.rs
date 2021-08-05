@@ -1,9 +1,8 @@
-use rand::prelude::*;
 use pretty_hex::*;
 use std::io::Write;
 use std::fs::OpenOptions;
 use std::net::{UdpSocket, SocketAddr};
-use std::{thread, time};
+use std::{thread, time, cmp};
 use std::result::Result;
 use std::collections::LinkedList;
 use math::round::ceil;
@@ -11,8 +10,8 @@ use crate::cmdline_handler::Options;
 use crate::packets::*;
 use crate::net_util::*;
 
-const PACKET_SIZE : u32 = 1280;
-const DATA_SIZE : u32 = 1270;
+const PACKET_SIZE : usize = 1280;
+const DATA_SIZE : usize = 1270;
 const TIMEOUT : u64 = 1;
 const START_FLOW_WINDOW : u16 = 8;
 const DATA_HEADER_SIZE : usize = 10;
@@ -82,7 +81,7 @@ impl TBDClient {
             // Receive response from server
             let mut packet_buffer : [u8; PACKET_SIZE as usize] = [0; PACKET_SIZE as usize];
             let (len, addr) = self.receive_next(&sock, &mut packet_buffer);
-            debug!("Received response: {}", pretty_hex(&packet_buffer));
+            debug!("Received response from {}: {}", addr, pretty_hex(&packet_buffer));
             
             // Check for errors and correct packet
             if check_packet_type(&packet_buffer.to_vec(), PacketType::Error) {
@@ -150,10 +149,10 @@ impl TBDClient {
         }
     }
 
-    // TODO: Inlude the computation of the iterations in here
-    fn create_ack_list(&mut self) -> LinkedList<u16> {
+    fn create_ack_list(&mut self, packets : u16) -> LinkedList<u16> {
         let mut list = LinkedList::new();
-        for i in 1..self.flow_window + 1 {
+        // Because the ID 0 is blocked for the metadata packet
+        for i in 1..packets + 1 {
             list.push_back(i);
         }
         list
@@ -169,41 +168,50 @@ impl TBDClient {
         new_list
     }
 
+    fn compute_block_params(&self) -> (u16, usize) {
+        let remain = self.file_size - self.received;
+        // The buffer size for the whole next block
+        let window_size = (DATA_SIZE as u16 * self.flow_window) as u64;
+        // Only read in the min(window,remain)
+        let window_size = cmp::min(window_size, remain);
+
+        // Compute the iteration counter
+        let mut iterations = self.flow_window; // default
+
+        if window_size == remain {
+            // In this case it is always valid that we are sending less than a whole block
+
+            // Compute the number of iterations that are executed in this block
+            let res = remain as f64 / DATA_SIZE as f64;
+            debug!("Iterations: {}", res);
+            iterations = ceil(res, 0) as u16;
+        }
+        (iterations, window_size as usize)
+    }
+
     fn receive_data(&mut self, sock : &UdpSocket, filename : String) {
         info!("Starting file transmission...");
 
         // Compute the amount of bytes left
+        let (iterations, window_size) = self.compute_block_params();
 
-        // Prepare buffers
-        let mut buffer_size = DATA_SIZE as u64 * self.flow_window as u64;
-        let remain = self.file_size - self.received; // Only data
-        if buffer_size > remain {
-            buffer_size = remain;
-        }
-        let mut window_buffer = vec![0; buffer_size as usize]; // Only pure data
-        
-        let mut packet_size = PACKET_SIZE as u64; // Also header
-        if packet_size > remain {
-            packet_size = remain + DATA_HEADER_SIZE as u64;
-        }
+        // Prepare the buffer for the next whole window
+        let mut window_buffer = vec![0; window_size]; // Only pure data
 
         // Prepare working vars
         let mut i = 0;
-        let mut iteration = ceil(remain as f64 / PACKET_SIZE as f64, 0) as u16;
-        if iteration > self.flow_window {
-            iteration = self.flow_window;
-        }
 
-        debug!("Making {} iterations in the current block {}", iteration, self.block_id);
-        let mut list = self.create_ack_list();
+        debug!("Making {} iterations in the current block {}", iterations, self.block_id);
+        let mut list = self.create_ack_list(iterations);
         
         // Loop through all packets of the window
         loop {
-            let mut packet_buffer = vec![0; packet_size as usize];
+            // Creating the storage for the next packet
+            let mut packet_buffer = vec![0; PACKET_SIZE];
             
-            // TODO: Error handling
             let (len, addr) = self.receive_next(sock, &mut packet_buffer);
-            debug!("Received {} bytes from {}:\n{}", len, addr, pretty_hex(&packet_buffer));
+            // debug!("Received {} bytes from {}:\n{}", len, addr, pretty_hex(&packet_buffer));
+            debug!("Received {} bytes from {}", len, addr);
             
             if check_packet_type(&packet_buffer.to_vec(), PacketType::Error) {
                 let err = match ErrorPacket::deserialize(&packet_buffer[0..len]) {
@@ -229,7 +237,7 @@ impl TBDClient {
                 continue;
             }
 
-            let data = match DataPacket::deserialize(&packet_buffer) {
+            let data = match DataPacket::deserialize(&packet_buffer[0..len]) {
                 Ok(d) => d,
                 Err(e) => {
                     warn!("Failed to deserialize the data packet: {}", e);
@@ -253,18 +261,20 @@ impl TBDClient {
 
             // Copying the data at the right place into the buffer
             // - 1 because the seq id 0 is reserved for metadata but we still want to use the space
-            let start = (data.sequence_id - 1) as usize * packet_size as usize;
-            // Copy only what we received (10 bytes header)
-            let end = start + (len - DATA_HEADER_SIZE) as usize;
-            window_buffer[start..end].copy_from_slice(&data.data);
+            let start = (data.sequence_id - 1) as usize * DATA_SIZE as usize;
+            // Copy only what we received (10 bytes header) - expect this to be the last packet
+            let p_size = cmp::min(len - DATA_HEADER_SIZE, (self.file_size - self.received) as usize);
+            let end = start + p_size;
+            debug!("Start: {} P_size: {} End: {}", start, p_size, end);
+            window_buffer[start..end].copy_from_slice(&data.data[0..p_size]);
 
             // Ack handling
             list = self.remove_from_list(&list, data.sequence_id);
             // Advancing the received only after the complete transmission
-            // self.received += DATA_SIZE as u64;
+            self.received += p_size as u64;
             
             i += 1;
-            if i == iteration {
+            if i == iterations {
                 info!("Received all packets for the current block.");
                 break;
             }
@@ -278,6 +288,7 @@ impl TBDClient {
 
             // Should we increase by one?
             self.flow_window += 1;
+            // TODO: Send ACK
         }
 
         self.block_id += 1;
@@ -291,7 +302,9 @@ impl TBDClient {
     }
     
     fn write_data_to_file(&mut self, file: &String, data : &Vec<u8>) -> std::io::Result<()> {
-        let mut output = match OpenOptions::new().append(true).create(true).open(file) {
+        let mut file = String::from(file);
+        file.push_str(".new");
+        let mut output = match OpenOptions::new().truncate(true).write(true).create(true).open(&file) {
             Ok(f) => f,
             Err(e) => {
                 error!("Failed to create file {}: {}", file, e);
