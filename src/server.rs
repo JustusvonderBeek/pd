@@ -12,7 +12,7 @@ use std::{thread, time};
 use crate::cmdline_handler::Options;
 use crate::packets::*;
 
-const DEBUG_PACKET_SIZE : usize = 1280;
+const PACKET_SIZE : usize = 1280;
 const DATA_SIZE : usize = 1270;
 const MAX_FLOW_WINDOW : u16 = 100;
 
@@ -65,13 +65,13 @@ impl TBDServer {
         loop {
             // 1. Reading a new packet (because this is not threaded block here)
 
-            let (packet, addr) = self.get_next_packet(&sock).unwrap();
+            let (packet, len, addr) = self.get_next_packet(&sock).unwrap();
 
             // 2. Check for a new client (according to protocol we always get a new request on resumption)
     
             if check_packet_type(&packet, PacketType::Request) {
                 // New client
-                let packet = match RequestPacket::deserialize(&packet) {
+                let packet = match RequestPacket::deserialize(&packet[..len]) {
                     Ok(p) => p,
                     Err(e) => {
                         error!("Failed to deserialize request packet: {}", e);
@@ -117,7 +117,7 @@ impl TBDServer {
                 self.create_state(connection_id, filename, filesize, addr);
                 
                 // Construct the answer packet
-                let resp = ResponsePacket::serialize(connection_id, 0, 0, filehash, filesize);
+                let resp = ResponsePacket::serialize(&connection_id, &0, &filehash, &filesize);
                 match sock.send_to(&resp, addr) {
                     Ok(size) => debug!("Sent {} bytes to {}", size, addr),
                     Err(e) => {
@@ -175,7 +175,7 @@ impl TBDServer {
                         }
                     };
 
-                    let mut state = match self.states.get(&ack.connection_id) {
+                    let state = match self.states.get(&ack.connection_id) {
                         Some(s) => s.to_owned(),
                         None => {
                             error!("Connection with ID {} does not exists", ack.connection_id);
@@ -215,8 +215,8 @@ impl TBDServer {
         
     }
 
-    fn get_next_packet(&mut self, sock : &UdpSocket) -> Result<(Vec<u8>, SocketAddr), ()> {
-        let mut buf : [u8; DEBUG_PACKET_SIZE] = [0; DEBUG_PACKET_SIZE];
+    fn get_next_packet(&mut self, sock : &UdpSocket) -> Result<(Vec<u8>, usize, SocketAddr), ()> {
+        let mut buf : [u8; PACKET_SIZE] = [0; PACKET_SIZE];
         debug!("Waiting for new incoming packet");
         let (len, addr) = match sock.recv_from(&mut buf) {
             Ok(l) => l,
@@ -228,7 +228,7 @@ impl TBDServer {
         debug!("Received {} bytes from {}", len, addr);
         debug!("Data:\n{}", pretty_hex(&buf));
 
-        Ok((buf.to_vec(), addr))
+        Ok((buf.to_vec(), len, addr))
     }
 
     fn send_next_block(&mut self, connection_id : &u32, sock : &UdpSocket) {
@@ -250,13 +250,25 @@ impl TBDServer {
             },
         };
 
-        let mut buffer_size = DATA_SIZE * connection.flow_window as usize;
-        let dif = (connection.file_size - connection.sent) as usize;
-        // Have to shape this because read_exact does not necessarily read all bytes if the buffer is too large
-        if buffer_size > dif {
-            buffer_size = dif;
-        }
 
+        // TODO: Testing and rework the buffers and size
+
+        // The buffer for the whole next block
+        let mut buffer_size = DATA_SIZE * connection.flow_window as usize; 
+        // Have to shape this because read_exact does not necessarily read all bytes if the buffer is too large
+        let remain = (connection.file_size - connection.sent) as usize;
+        let mut iter = connection.flow_window as usize;
+        let mut packet_size = DATA_SIZE;
+        if buffer_size > remain {
+            buffer_size = remain;
+            // Computing the iterations (should be auto floored)
+            iter = remain / DATA_SIZE;
+            if iter < 2 {
+                packet_size = remain;
+            }
+        }
+        debug!("Making {} iterations sending {} bytes total in {} byte chunks", iter + 1, buffer_size, packet_size);
+        
         let mut block_buffer = vec![0; buffer_size];
         match file.read_exact(&mut block_buffer) {
             Ok(_) => debug!("Read {} bytes from file: {}", buffer_size, filename),
@@ -266,24 +278,34 @@ impl TBDServer {
                 return;
             }
         };
-
+        
         // Sending the data packets
+        let mut send = 0;
 
-        for i in 0..connection.flow_window {
+        for i in 0..iter {
             // Creating the current packet
-            let mut p_buffer = vec![0; DATA_SIZE];
-            let start = i as usize * DATA_SIZE;
-            let end = start + DATA_SIZE;
+            let mut p_buffer = vec![0; packet_size];
+            let start = i as usize * packet_size;
+            let mut end = start + packet_size;
+            if buffer_size - send < packet_size {
+                end = start + (buffer_size - send);
+            }
             // TODO: This might be risky. Testing! 
             p_buffer[..].clone_from_slice(&block_buffer[start..end]);
 
-            let data = DataPacket::serialize(connection_id.to_owned(), connection.block_id, i, 0, &p_buffer);
-            match sock.send_to(&data, connection.endpoint) {
-                Ok(s) => debug!("Sent {} bytes to {}", s, connection.endpoint),
+            let data = DataPacket::serialize(connection_id, &connection.block_id, &(i as u16 + 1), &p_buffer);
+            let size = match sock.send_to(&data, connection.endpoint) {
+                Ok(s) => {
+                    debug!("Sent {} bytes to {}", s, connection.endpoint); 
+                    s
+                },
                 Err(e) => {
                     error!("Failed to send data to {}: {}", connection.endpoint, e);
+                    self.send_error(&sock, &connection.endpoint, ErrorTypes::Abort);
+                    self.remove_state(connection_id.to_owned());
+                    return;
                 }
-            }
+            };
 
             // The changes in the connections stats (flow window, sent, etc.) are only made when the ACK arrives
         }
@@ -330,7 +352,7 @@ impl TBDServer {
             ErrorTypes::FileModified => 0x03,
             ErrorTypes::Abort => 0x04,
         };
-        let err = ErrorPacket::serialize(0, 0x40, val);
+        let err = ErrorPacket::serialize(&0, &0, &val);
         match sock.send_to(&err, addr) {
             Ok(s) => debug!("Sent {} bytes of error message", s),
             Err(e) => warn!("Failed to send error message: {}", e),
