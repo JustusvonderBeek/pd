@@ -179,7 +179,8 @@ impl TBDServer {
                         }
                     };
 
-                    let state = match self.states.get(&ack.connection_id) {
+                    let t = &self.states.get(&ack.connection_id);
+                    let state = match t {
                         Some(s) => s.to_owned(),
                         None => {
                             error!("Connection with ID {} does not exists", ack.connection_id);
@@ -191,14 +192,22 @@ impl TBDServer {
                         self.handle_retransmission();
                     } else {
                         // Advance the parameter because of successfull transmission
+                        debug!("Successfully transmitted block {} of connection {}", state.block_id, connection_id);
                         
+                        // Check if the file transfer is complete and the state can be deleted
+                        let sent = (DATA_SIZE * state.flow_window as usize) as u64; // Over approximation (but if it is too much this should still be fine)
+                        if state.sent + sent > state.file_size {
+                            info!("File {} successfully transferred! Removing state...", state.file);
+                            // self.remove_state(connection_id);
+                            continue;
+                        }
+
                         // Cap the maximal flow window
                         let mut flow_window = ack.flow_window;
                         if ack.flow_window > MAX_FLOW_WINDOW {
                             flow_window = MAX_FLOW_WINDOW;
                         }
 
-                        let sent = (DATA_SIZE * state.flow_window as usize) as u64;
                         let new_state = ConnectionStore {
                             state : ConnectionState::Transfer,
                             block_id : state.block_id + 1,
@@ -208,8 +217,10 @@ impl TBDServer {
                             sent : sent,
                             endpoint : state.endpoint,
                         };
+
                         self.states.insert(connection_id, new_state);
                     }
+                    continue;
                 }
 
                 error!("Expected an acknowledgment or error but got something else!\n{}", pretty_hex(&packet));
@@ -230,7 +241,7 @@ impl TBDServer {
             }
         };
         debug!("Received {} bytes from {}", len, addr);
-        debug!("Data:\n{}", pretty_hex(&buf));
+        debug!("{}", pretty_hex(&buf));
 
         Ok((buf.to_vec(), len, addr))
     }
