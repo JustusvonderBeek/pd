@@ -1,1 +1,2 @@
 Das ist eine einfache Textdatei um das einlesen von Dateien zu testen!
+Das ist eine einfache Textdatei um das einlesen von Dateien zu testen!
