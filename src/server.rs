@@ -277,7 +277,7 @@ impl TBDServer {
             // TODO: This might be risky. Testing! 
             p_buffer[..].clone_from_slice(&block_buffer[start..end]);
 
-            let data = DataPacket::serialize(connection_id.to_owned(), connection.block_id, i, 0, p_buffer);
+            let data = DataPacket::serialize(connection_id.to_owned(), connection.block_id, i, 0, &p_buffer);
             match sock.send_to(&data, connection.endpoint) {
                 Ok(s) => debug!("Sent {} bytes to {}", s, connection.endpoint),
                 Err(e) => {
@@ -330,7 +330,7 @@ impl TBDServer {
             ErrorTypes::FileModified => 0x03,
             ErrorTypes::Abort => 0x04,
         };
-        let err = ErrorPacket::serialize(0, 0, 0x40, val);
+        let err = ErrorPacket::serialize(0, 0x40, val);
         match sock.send_to(&err, addr) {
             Ok(s) => debug!("Sent {} bytes of error message", s),
             Err(e) => warn!("Failed to send error message: {}", e),
