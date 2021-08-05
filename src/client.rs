@@ -146,8 +146,8 @@ impl TBDClient {
     }
 
     fn create_ack_list(&self) -> LinkedList<u16> {
-        let list = LinkedList::new();
-        for i in 0..self.flow_window {
+        let mut list = LinkedList::new();
+        for i in 1..self.flow_window + 1 {
             list.push_back(i);
         }
         list
@@ -160,6 +160,7 @@ impl TBDClient {
         
         let mut packet_buffer : [u8; PACKET_SIZE as usize] = [0; PACKET_SIZE as usize];
         let mut i = 0;
+        let list = self.create_ack_list();
 
         loop {
             // TODO: Error handling
