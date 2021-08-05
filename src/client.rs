@@ -6,13 +6,16 @@ use std::net::{UdpSocket, SocketAddr};
 use std::{thread, time};
 use std::result::Result;
 use std::collections::LinkedList;
+use math::round::ceil;
 use crate::cmdline_handler::Options;
 use crate::packets::*;
 use crate::net_util::*;
 
 const PACKET_SIZE : u32 = 1280;
+const DATA_SIZE : u32 = 1270;
 const TIMEOUT : u64 = 1;
 const START_FLOW_WINDOW : u16 = 8;
+const DATA_HEADER_SIZE : usize = 10;
 
 pub struct TBDClient {
     options : Options,
@@ -56,8 +59,10 @@ impl TBDClient {
         let mut servername = String::from(self.options.hostname.trim().trim_matches(char::from(0)));
         servername.push_str(":");
         servername.push_str(&self.options.server_port.to_string());
+        // Otherwise we get an error
+        let filenames = self.options.filename.clone();
         
-        for filename in &self.options.filename {
+        for filename in filenames {
             // TODO: Add the handling for the continued file request
 
             // The initial flow window is set by the application implementation
@@ -108,7 +113,7 @@ impl TBDClient {
             self.file_hash = res.file_hash;
             self.file_size = res.file_size;
 
-            self.receive_data(&sock);            
+            self.receive_data(&sock, filename);        
         }
 
         info!("Finished file transfer");
@@ -116,7 +121,7 @@ impl TBDClient {
         Ok(())
     }
 
-    fn bind_to_socket(&self, retries : u32) -> Result<UdpSocket, ()> {
+    fn bind_to_socket(&mut self, retries : u32) -> Result<UdpSocket, ()> {
         for i in 0..retries {
             let mut addr = String::from("0.0.0.0:");
             let port = self.options.client_port + i;
@@ -133,7 +138,7 @@ impl TBDClient {
         Err(())
     }
 
-    fn receive_next(&self, sock : &UdpSocket, mut buf : &mut [u8]) -> (usize, SocketAddr) {
+    fn receive_next(&mut self, sock : &UdpSocket, mut buf : &mut [u8]) -> (usize, SocketAddr) {
         loop {
             match sock.recv_from(&mut buf) {
                 Ok(r) => break r,
@@ -145,7 +150,8 @@ impl TBDClient {
         }
     }
 
-    fn create_ack_list(&self) -> LinkedList<u16> {
+    // TODO: Inlude the computation of the iterations in here
+    fn create_ack_list(&mut self) -> LinkedList<u16> {
         let mut list = LinkedList::new();
         for i in 1..self.flow_window + 1 {
             list.push_back(i);
@@ -153,16 +159,48 @@ impl TBDClient {
         list
     }
 
-    fn receive_data(&self, sock : &UdpSocket) {
-        // Compute the size of the whole next block
-        let buffer_size = PACKET_SIZE * self.flow_window as u32;
-        let mut window_buffer = vec![0; buffer_size as usize];
-        
-        let mut packet_buffer : [u8; PACKET_SIZE as usize] = [0; PACKET_SIZE as usize];
-        let mut i = 0;
-        let list = self.create_ack_list();
+    fn remove_from_list(&mut self, list : &LinkedList<u16>, element : u16) -> LinkedList<u16> {
+        let mut new_list : LinkedList<u16> = LinkedList::new();
+        for seq in list {
+            if seq.to_owned() != element {
+                new_list.push_back(seq.to_owned());
+            }
+        }
+        new_list
+    }
 
+    fn receive_data(&mut self, sock : &UdpSocket, filename : String) {
+        info!("Starting file transmission...");
+
+        // Compute the amount of bytes left
+
+        // Prepare buffers
+        let mut buffer_size = DATA_SIZE as u64 * self.flow_window as u64;
+        let remain = self.file_size - self.received; // Only data
+        if buffer_size > remain {
+            buffer_size = remain;
+        }
+        let mut window_buffer = vec![0; buffer_size as usize]; // Only pure data
+        
+        let mut packet_size = PACKET_SIZE as u64; // Also header
+        if packet_size > remain {
+            packet_size = remain + DATA_HEADER_SIZE as u64;
+        }
+
+        // Prepare working vars
+        let mut i = 0;
+        let mut iteration = ceil(remain as f64 / PACKET_SIZE as f64, 0) as u16;
+        if iteration > self.flow_window {
+            iteration = self.flow_window;
+        }
+
+        debug!("Making {} iterations in the current block {}", iteration, self.block_id);
+        let mut list = self.create_ack_list();
+        
+        // Loop through all packets of the window
         loop {
+            let mut packet_buffer = vec![0; packet_size as usize];
+            
             // TODO: Error handling
             let (len, addr) = self.receive_next(sock, &mut packet_buffer);
             debug!("Received {} bytes from {}:\n{}", len, addr, pretty_hex(&packet_buffer));
@@ -176,9 +214,14 @@ impl TBDClient {
                         std::process::exit(1);
                     }
                 };
-                error!("Received an error instead of a data packet: ErrorCode == {}", err.error_code);
-                // Abort the file transfer
-                std::process::exit(0);
+                if err.connection_id == self.connection_id {
+                    error!("Received an error instead of a data packet: ErrorCode == {}", err.error_code);
+                    // Abort the file transfer
+                    std::process::exit(0);
+                } else {
+                    warn!("Received an error with wrong connection id");
+                    continue;
+                }
             }
 
             if !check_packet_type(&packet_buffer.to_vec(), PacketType::Data) {
@@ -210,27 +253,44 @@ impl TBDClient {
 
             // Copying the data at the right place into the buffer
             // - 1 because the seq id 0 is reserved for metadata but we still want to use the space
-            let start = (data.sequence_id - 1) as usize * PACKET_SIZE as usize;
-            // Copy only what we received
-            let end = start + len as usize;
-            window_buffer[start..end].copy_from_slice(&packet_buffer);
+            let start = (data.sequence_id - 1) as usize * packet_size as usize;
+            // Copy only what we received (10 bytes header)
+            let end = start + (len - DATA_HEADER_SIZE) as usize;
+            window_buffer[start..end].copy_from_slice(&data.data);
 
-            // TODO: Include the seq id in the ack
-
-
+            // Ack handling
+            list = self.remove_from_list(&list, data.sequence_id);
+            // Advancing the received only after the complete transmission
+            // self.received += DATA_SIZE as u64;
+            
             i += 1;
-            // break;
+            if i == iteration {
+                info!("Received all packets for the current block.");
+                break;
+            }
         }
 
+        if list.len() != 0 {
+            info!("Missing {} packets. Starting retransmission.", list.len());
+            self.handle_retransmission(&mut window_buffer);
+        } else {
+            // Things we only do in a successful transmission
+
+            // Should we increase by one?
+            self.flow_window += 1;
+        }
+
+        self.block_id += 1;
+
         // Writing the current block in correct order into the file
-        // self.write_data_to_file(&filename, &window_buffer).unwrap();
+        self.write_data_to_file(&filename, &window_buffer).unwrap();
     }
 
-    fn handle_retransmission() {
+    fn handle_retransmission(&mut self, window_buffer : &mut Vec<u8>) {
         
     }
     
-    fn write_data_to_file(&self, file: &String, data : &Vec<u8>) -> std::io::Result<()> {
+    fn write_data_to_file(&mut self, file: &String, data : &Vec<u8>) -> std::io::Result<()> {
         let mut output = match OpenOptions::new().append(true).create(true).open(file) {
             Ok(f) => f,
             Err(e) => {
@@ -245,7 +305,7 @@ impl TBDClient {
         
     }
 
-    fn sleep_n(&self, sec : u64) {
+    fn sleep_n(&mut self, sec : u64) {
         let duration = time::Duration::from_secs(sec);
         thread::sleep(duration);
     } 
