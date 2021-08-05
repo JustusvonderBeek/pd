@@ -11,6 +11,7 @@ use std::convert::TryInto;
 use std::{thread, time};
 use crate::cmdline_handler::Options;
 use crate::packets::*;
+use crate::net_util::*;
 
 const PACKET_SIZE : usize = 1280;
 const DATA_SIZE : usize = 1270;
@@ -92,7 +93,7 @@ impl TBDServer {
                     Ok(f) => f,
                     Err(e) => {
                         warn!("Failed to read in the file {}\n{}", filename, e);
-                        self.send_error(&sock, &addr, ErrorTypes::FileUnavailable);
+                        send_error(&sock, &addr, ErrorTypes::FileUnavailable);
                         continue;
                     },
                 };
@@ -107,7 +108,7 @@ impl TBDServer {
                     Ok(h) => h,
                     Err(e) => {
                         warn!("Failed to convert hash: {}", e);
-                        self.send_error(&sock, &addr, ErrorTypes::Abort);
+                        send_error(&sock, &addr, ErrorTypes::Abort);
                         continue;
                     }
                 };
@@ -245,7 +246,7 @@ impl TBDServer {
             Ok(f) => f,
             Err(e) => {
                 warn!("Failed to read in the file {}\n{}", filename, e);
-                self.send_error(&sock, &connection.endpoint, ErrorTypes::Abort);
+                send_error(&sock, &connection.endpoint, ErrorTypes::Abort);
                 return;
             },
         };
@@ -274,7 +275,7 @@ impl TBDServer {
             Ok(_) => debug!("Read {} bytes from file: {}", buffer_size, filename),
             Err(_) => {
                 error!("Failed to read in the next block of file: {}", filename);
-                self.send_error(&sock, &connection.endpoint, ErrorTypes::Abort);
+                send_error(&sock, &connection.endpoint, ErrorTypes::Abort);
                 return;
             }
         };
@@ -301,11 +302,13 @@ impl TBDServer {
                 },
                 Err(e) => {
                     error!("Failed to send data to {}: {}", connection.endpoint, e);
-                    self.send_error(&sock, &connection.endpoint, ErrorTypes::Abort);
+                    send_error(&sock, &connection.endpoint, ErrorTypes::Abort);
                     self.remove_state(connection_id.to_owned());
                     return;
                 }
             };
+
+            send += size;
 
             // The changes in the connections stats (flow window, sent, etc.) are only made when the ACK arrives
         }
@@ -343,20 +346,6 @@ impl TBDServer {
             endpoint : remote,
         };
         self.states.insert(connection_id, state);
-    }
-
-    fn send_error(&self, sock : &UdpSocket, addr : &SocketAddr, e : ErrorTypes) {
-        let val = match e {
-            ErrorTypes::FileUnavailable => 0x01,
-            ErrorTypes::ConnectionRefused => 0x02,
-            ErrorTypes::FileModified => 0x03,
-            ErrorTypes::Abort => 0x04,
-        };
-        let err = ErrorPacket::serialize(&0, &0, &val);
-        match sock.send_to(&err, addr) {
-            Ok(s) => debug!("Sent {} bytes of error message", s),
-            Err(e) => warn!("Failed to send error message: {}", e),
-        };
     }
 
     fn sleep_n_sec(&self, sec : u64) {
