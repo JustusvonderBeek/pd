@@ -9,6 +9,7 @@ use rand::Rng;
 use sha2::{Sha256, Digest};
 use std::convert::TryInto;
 use std::{thread, time};
+use math::round::ceil;
 use crate::cmdline_handler::Options;
 use crate::packets::*;
 use crate::net_util::*;
@@ -130,7 +131,7 @@ impl TBDServer {
                 }
 
                 // Wait a short period of time
-                self.sleep_n_ms(150);
+                self.sleep_n_ms(500);
 
                 // Start transfer
                 self.send_next_block(&connection_id, &sock);
@@ -262,13 +263,15 @@ impl TBDServer {
         let mut packet_size = DATA_SIZE;
         if buffer_size > remain {
             buffer_size = remain;
-            // Computing the iterations (should be auto floored)
-            iter = remain / DATA_SIZE;
+            // Computing the iterations
+            let res = remain as f64 / DATA_SIZE as f64;
+            debug!("Iterations: {}", res);
+            iter = ceil(res, 0) as usize;
             if iter < 2 {
                 packet_size = remain;
             }
         }
-        debug!("Making {} iterations sending {} bytes total in {} byte chunks", iter + 1, buffer_size, packet_size);
+        debug!("Making {} iterations sending {} bytes total in {} byte chunks", iter, buffer_size, packet_size);
         
         let mut block_buffer = vec![0; buffer_size];
         match file.read_exact(&mut block_buffer) {
