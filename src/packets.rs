@@ -77,7 +77,7 @@ pub struct ResponsePacket {
 
 impl ResponsePacket {
     /// Creates a byte representation of a response packet with given parameters in an u8 vector
-    pub fn serialize(connection_id : u32, block_id : u32, file_hash : [u8; 32], file_size : u64) -> Vec<u8>{
+    pub fn serialize(connection_id : &u32, block_id : &u32, file_hash : &[u8; 32], file_size : &u64) -> Vec<u8>{
         let con_id_u8s = connection_id.to_be_bytes();
         let con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
         let fields : u8 = 0b00000000;
@@ -85,7 +85,7 @@ impl ResponsePacket {
         buffer.extend_from_slice(&con_id);
         buffer.push(fields);
         buffer.extend_from_slice(&block_id.to_be_bytes());
-        buffer.extend_from_slice(&file_hash);
+        buffer.extend_from_slice(file_hash);
         buffer.extend(&file_size.to_be_bytes());
         
         return buffer;
@@ -122,7 +122,7 @@ pub struct DataPacket {
 
 impl DataPacket {
     /// Creates a byte representation of a data packet with given parameters in an u8 vector
-    pub fn serialize(connection_id : u32, block_id : u32, sequence_id : u16, data : &Vec<u8>) -> Vec<u8> {
+    pub fn serialize(connection_id : &u32, block_id : &u32, sequence_id : &u16, data : &Vec<u8>) -> Vec<u8> {
         if data.len() >= 1220{
             println!("Tried to send {} Bytes of data. Can not fit into one package", data.len());
             return Vec::new();
@@ -171,7 +171,7 @@ pub struct AckPacket {
 
 impl AckPacket {
     /// Creates a byte representation of a ACK packet with given parameters in an u8 vector
-    pub fn serialize(connection_id : u32, block_id : u32, flow_window : u16, length : u16, sid_list : &Vec<u32>) -> Vec<u8> {
+    pub fn serialize(connection_id : &u32, block_id : &u32, flow_window : &u16, length : &u16, sid_list : &Vec<u32>) -> Vec<u8> {
         // TODO: Add a check if the sid_list is too long here
         let con_id_u8s = connection_id.to_be_bytes();
         let con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
@@ -223,7 +223,7 @@ pub struct MetadataPacket{
 
 impl MetadataPacket {
     /// Creates a byte representation of a metadata packet with given parameters in an u8 vector
-    pub fn serialize(connection_id : u32, block_id : u32, new_block_size : u16) -> Vec<u8> {
+    pub fn serialize(connection_id : &u32, block_id : &u32, new_block_size : &u16) -> Vec<u8> {
         let con_id_u8s = connection_id.to_be_bytes();
         let con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
         let mut buffer : Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE as usize);    // Memory usage might be higher with that capacity
@@ -273,7 +273,7 @@ pub struct ErrorPacket{
 impl ErrorPacket {
     // TODO: Remove fields and set the flags according to the protocol
     /// Creates a byte representation of a error packet with given parameters in an u8 vector
-    pub fn serialize(connection_id : u32, block_id : u32, error_code : u32) -> Vec<u8> {
+    pub fn serialize(connection_id : &u32, block_id : &u32, error_code : &u32) -> Vec<u8> {
         let con_id_u8s = connection_id.to_be_bytes();
         let con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
         let mut buffer : Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE as usize);    // Memory usage might be higher with that capacity
@@ -404,8 +404,8 @@ mod tests {
             file_hash : file_hash,
             file_size : 0x40000
         };
-        let ser = ResponsePacket::serialize(base.connection_id, 
-            base.block_id, base.file_hash, base.file_size);
+        let ser = ResponsePacket::serialize(&base.connection_id, 
+            &base.block_id, &base.file_hash, &base.file_size);
         let deser = ResponsePacket::deserialize(&ser).unwrap();
         assert_eq!(deser.connection_id, base.connection_id);
         assert_eq!(deser.fields, base.fields);
@@ -427,8 +427,8 @@ mod tests {
             sequence_id : 0x3355,
             data : data
         };
-        let ser = DataPacket::serialize(base.connection_id, 
-            base.block_id, base.sequence_id, &base.data);
+        let ser = DataPacket::serialize(&base.connection_id, 
+            &base.block_id, &base.sequence_id, &base.data);
         let deser = DataPacket::deserialize(&ser).unwrap();
         assert_eq!(deser.connection_id, base.connection_id);
         assert_eq!(deser.fields, base.fields);
@@ -452,8 +452,8 @@ mod tests {
             length : 0x20,
             sid_list : sid_list
         };
-        let ser = AckPacket::serialize(base.connection_id, 
-            base.block_id, base.flow_window, base.length, &base.sid_list);
+        let ser = AckPacket::serialize(&base.connection_id, 
+            &base.block_id, &base.flow_window, &base.length, &base.sid_list);
         let deser = AckPacket::deserialize(&ser).unwrap();
         assert_eq!(deser.connection_id, base.connection_id);
         assert_eq!(deser.block_id, base.block_id);
@@ -472,8 +472,8 @@ mod tests {
             sequence_id : 0x0,      // Needs to be 0 on connection establishment
             new_block_size : 0x8
         };
-        let ser = MetadataPacket::serialize(base.connection_id, 
-            base.block_id, base.new_block_size);
+        let ser = MetadataPacket::serialize(&base.connection_id, 
+            &base.block_id, &base.new_block_size);
         let deser = MetadataPacket::deserialize(&ser).unwrap();
         assert_eq!(deser.connection_id, base.connection_id);
         assert_eq!(deser.fields, base.fields);
@@ -490,8 +490,8 @@ mod tests {
             block_id : 0x22334455,
             error_code : 0x12
         };
-        let ser = ErrorPacket::serialize(base.connection_id, 
-            base.block_id, base.error_code);
+        let ser = ErrorPacket::serialize(&base.connection_id, 
+            &base.block_id, &base.error_code);
         let deser = ErrorPacket::deserialize(&ser).unwrap();
         assert_eq!(deser.connection_id, base.connection_id);
         assert_eq!(deser.fields, base.fields);
