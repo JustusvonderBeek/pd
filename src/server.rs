@@ -8,7 +8,7 @@ use std::fs::File;
 use rand::Rng;
 use sha2::{Sha256, Digest};
 use std::convert::TryInto;
-use std::{thread, time};
+use std::{thread, time, cmp};
 use math::round::ceil;
 use crate::cmdline_handler::Options;
 use crate::packets::*;
@@ -17,6 +17,7 @@ use crate::net_util::*;
 const PACKET_SIZE : usize = 1280;
 const DATA_SIZE : usize = 1270;
 const MAX_FLOW_WINDOW : u16 = 100;
+const DEFAULT_FLOW_WINDOW : u16 = 8;
 
 enum ConnectionState {
     Transfer,
@@ -99,6 +100,7 @@ impl TBDServer {
                     },
                 };
                 let filesize = file.len() as u64;
+                debug!("File size: {}", filesize);
 
                 // Compute the checksum
                 let mut hasher = Sha256::new();
@@ -116,7 +118,7 @@ impl TBDServer {
 
                 // Create the new state
                 let connection_id = self.generate_conn_id();
-                self.create_state(connection_id, filename, filesize, addr);
+                self.create_state(connection_id, filename, filesize, packet.flow_window, addr);
                 
                 // Construct the answer packet
                 let resp = ResponsePacket::serialize(&connection_id, &0, &filehash, &filesize);
@@ -241,7 +243,7 @@ impl TBDServer {
                 return;
             },
         };
-        
+
         let filename = &connection.file;
         let mut file = match File::open(filename) {
             Ok(f) => f,
@@ -252,30 +254,14 @@ impl TBDServer {
             },
         };
 
+        // Preparing the data for the next block
+        let (iterations,window_size) = self.compute_block_params(&connection);
 
-        // TODO: Testing and rework the buffers and size
-
-        // The buffer for the whole next block
-        let mut buffer_size = DATA_SIZE * connection.flow_window as usize; 
-        // Have to shape this because read_exact does not necessarily read all bytes if the buffer is too large
-        let remain = (connection.file_size - connection.sent) as usize;
-        let mut iter = connection.flow_window as usize;
-        let mut packet_size = DATA_SIZE;
-        if buffer_size > remain {
-            buffer_size = remain;
-            // Computing the iterations
-            let res = remain as f64 / DATA_SIZE as f64;
-            debug!("Iterations: {}", res);
-            iter = ceil(res, 0) as usize;
-            if iter < 2 {
-                packet_size = remain;
-            }
-        }
-        debug!("Making {} iterations sending {} bytes total in {} byte chunks", iter, buffer_size, packet_size);
+        debug!("Making {} iterations sending {} bytes total in this block", iterations, window_size);
         
-        let mut block_buffer = vec![0; buffer_size];
-        match file.read_exact(&mut block_buffer) {
-            Ok(_) => debug!("Read {} bytes from file: {}", buffer_size, filename),
+        let mut window_buffer = vec![0; window_size];
+        match file.read_exact(&mut window_buffer) {
+            Ok(_) => debug!("Read {} bytes from file: {}", window_size, filename),
             Err(_) => {
                 error!("Failed to read in the next block of file: {}", filename);
                 send_error(&sock, &connection.endpoint, ErrorTypes::Abort);
@@ -284,21 +270,26 @@ impl TBDServer {
         };
         
         // Sending the data packets
-        let mut send = 0;
+        let mut remain_block = window_size;
 
-        for i in 0..iter {
+        for i in 0..iterations {
             // Creating the current packet
-            let mut p_buffer = vec![0; packet_size];
-            let start = i as usize * packet_size;
-            let mut end = start + packet_size;
-            if buffer_size - send < packet_size {
-                end = start + (buffer_size - send);
+            let mut p_buffer = vec![0; DATA_SIZE];
+            let start = i as usize * DATA_SIZE;
+            let mut end = start + DATA_SIZE;
+            
+            // Check if we need to pad the last packet
+            if remain_block < DATA_SIZE {
+                end = start + remain_block;
+                debug!("Pad the last packet with {} bytes", remain_block);
             }
-            // TODO: This might be risky. Testing! 
-            p_buffer[..].clone_from_slice(&block_buffer[start..end]);
 
-            let data = DataPacket::serialize(connection_id, &connection.block_id, &(i as u16 + 1), &p_buffer);
-            let size = match sock.send_to(&data, connection.endpoint) {
+            // Copying the file data in the current packet buffer
+            let p_size = end - start;
+            p_buffer[0..p_size].clone_from_slice(&window_buffer[start..end]);
+
+            let data = DataPacket::serialize(connection_id, &connection.block_id, &(i + 1), &p_buffer);
+            match sock.send_to(&data, connection.endpoint) {
                 Ok(s) => {
                     debug!("Sent {} bytes to {}", s, connection.endpoint); 
                     s
@@ -311,11 +302,32 @@ impl TBDServer {
                 }
             };
 
-            send += size;
+            remain_block -= p_size;
 
             // The changes in the connections stats (flow window, sent, etc.) are only made when the ACK arrives
         }
 
+    }
+
+    fn compute_block_params(&self, connection : &ConnectionStore) -> (u16, usize) {
+        let remain = (connection.file_size - connection.sent) as usize;
+        // The buffer size for the whole next block
+        let mut window_buffer = DATA_SIZE * connection.flow_window as usize; 
+        // Only read in the min(window,remain)
+        window_buffer = cmp::min(remain, window_buffer);
+
+        // Compute the iteration counter
+        let mut iterations = connection.flow_window; // default
+
+        if window_buffer == remain {
+            // In this case it is always valid that we are sending less than a whole block
+
+            // Compute the number of iterations that are executed in this block
+            let res = remain as f64 / DATA_SIZE as f64;
+            debug!("Iterations: {}", res);
+            iterations = ceil(res, 0) as u16;
+        }
+        (iterations, window_buffer)
     }
 
     fn handle_retransmission(&mut self) {
@@ -337,12 +349,13 @@ impl TBDServer {
         self.states.remove(&connection_id);
     }
 
-    fn create_state(&mut self, connection_id : u32, file_name : &str, size : u64, remote : SocketAddr) {
+    fn create_state(&mut self, connection_id : u32, file_name : &str, size : u64, flow : u16, remote : SocketAddr) {
         self.conn_ids.insert(connection_id);
+        let flow = cmp::min(flow, DEFAULT_FLOW_WINDOW);
         let state = ConnectionStore {
             state : ConnectionState::Transfer,
             block_id : 0,
-            flow_window : 8,
+            flow_window : flow,
             file : String::from(file_name),
             file_size : size,
             sent : 0,
