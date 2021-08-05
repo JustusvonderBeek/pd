@@ -2,6 +2,7 @@ mod cmdline_handler;
 mod packets;
 mod server;
 mod client;
+mod net_util;
 
 #[macro_use] extern crate log;
 extern crate simplelog;
