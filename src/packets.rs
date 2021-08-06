@@ -91,10 +91,10 @@ impl ResponsePacket {
 
     /// Parses a slice of u8 received over the network and returns a response packet or Failure
     pub fn deserialize(buffer : &[u8]) -> Result<ResponsePacket, &'static str> {
-        // if buffer.len() != 48 {
-        //     debug!("Could not parse Response Packet. Had invalid length for parsing {:x} expected 48.", buffer.len());
-        //     return Err("Parsing Response Packet");
-        // }
+        if buffer.len() != 48 {
+            debug!("Could not parse Response Packet. Had invalid length for parsing {:x} expected 48.", buffer.len());
+            return Err("Parsing Response Packet");
+        }
         let con_id : [u8; 4] = [0, buffer[0], buffer[1], buffer[2]];
         let mut file_hash : [u8; 32] = [0; 32];
         file_hash[..32].copy_from_slice(&buffer[8..40]);    // Real sketchy needs testing
@@ -144,6 +144,10 @@ impl DataPacket {
         if seq_id == 0 {
             debug!("Could not parse Data Packet. Had invalid SequenceID {:x}, must not be 0.", seq_id);
             return Err("Parsing Data Packet");
+        }
+        if buffer.len() < 10{
+            debug!("Data packet received with data length of 0.");
+            return Err("Parsing Data Packet too small");
         }
         Ok(DataPacket {
             connection_id : u32::from_be_bytes(con_id),
@@ -242,8 +246,13 @@ impl MetadataPacket {
             return Err("Malformed metadata packet could not be parsed.");
         }
         let con_id : [u8; 4] = [0, buffer[0], buffer[1], buffer[2]];
+        let connection_id = u32::from_be_bytes(con_id);
+        if connection_id == 0{
+            debug!("Received a metadata packet with connection id of 0.");
+            return Err("ConnectionID 0 is invalid for Metadata")
+        }
         Ok (MetadataPacket {
-            connection_id : u32::from_be_bytes(con_id),
+            connection_id : connection_id,
             fields : buffer[3],
             block_id : BigEndian::read_u32(&buffer[4..8]),
             sequence_id : BigEndian::read_u32(&buffer[8..12]),
@@ -269,7 +278,6 @@ pub struct ErrorPacket{
 }
 
 impl ErrorPacket {
-    // TODO: Remove fields and set the flags according to the protocol
     /// Creates a byte representation of a error packet with given parameters in an u8 vector
     pub fn serialize(connection_id : &u32, block_id : &u32, error_code : &u32) -> Vec<u8> {
         let con_id_u8s = connection_id.to_be_bytes();
