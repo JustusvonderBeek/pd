@@ -355,7 +355,7 @@ impl TBDClient {
 
         if list.len() != 0 {
             info!("Missing {} packets. Starting retransmission.", list.len());
-            self.handle_retransmission(&sock, &mut window_buffer, &list, filename);
+            self.handle_retransmission(&sock, &mut window_buffer, &mut list, filename);
         } else {
             // Things we only do in a successful transmission
             
@@ -384,11 +384,12 @@ impl TBDClient {
 
     fn handle_retransmission(&mut self, sock : &UdpSocket, window_buffer : &mut Vec<u8>, sid : &LinkedList<u16>, filename : &String) {
         // Waiting for the data
+        let mut l_sid : LinkedList<u16> = sid.clone();
         for i in 0..MAX_RETRANSMISSION {
 
             // Sending the NACK
-            let mut sid_vec : Vec<u16> = Vec::with_capacity(sid.len());
-            for i in sid {
+            let mut sid_vec : Vec<u16> = Vec::with_capacity(l_sid.len());
+            for i in &l_sid {
                 sid_vec.push(*i);
             }
 
@@ -402,7 +403,7 @@ impl TBDClient {
                 }
             }
 
-            for j in sid {
+            for _ in 0..l_sid.len() {
                 let mut packet_buffer = vec![0; PACKET_SIZE];
                 let mut len : usize = 0;
                 let mut addr : SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
@@ -477,15 +478,16 @@ impl TBDClient {
                 debug!("Start: {} P_size: {} End: {}", start, p_size, end);
                 window_buffer[start..end].copy_from_slice(&data.data[0..p_size]);
                 
-                self.remove_from_list(&sid, data.sequence_id);
+                l_sid = self.remove_from_list(&l_sid, data.sequence_id);
                 
-                if sid.len() == 0 {
+                if l_sid.len() == 0 {
+                    debug!("Received all packets!");
                     break;
                 }
 
             }
 
-            if sid.len() == 0 {
+            if l_sid.len() == 0 {
                 // Finished transfer
                 break;
             }
@@ -497,21 +499,11 @@ impl TBDClient {
         }
 
         // Sending the acknowledgment
-        let sid = Vec::new();
+        let sid_vec = Vec::new();
         self.flow_window = ceil(self.flow_window as f64 / 2.0, 0) as u16;
-        let ack = AckPacket::serialize(&self.connection_id, &self.block_id, &self.flow_window, &0, &sid);
+        let ack = AckPacket::serialize(&self.connection_id, &self.block_id, &self.flow_window, &0, &sid_vec);
         debug!("Created ACK: {}", pretty_hex(&ack));
         send_data(&ack, &sock, &self.server);
-
-        self.block_id += 1;
-
-        // Writing the current block in correct order into the file
-        if self.block_id > 1 {
-            self.write_data_to_file(&filename, &window_buffer, false).unwrap();
-        }
-        else {
-            self.write_data_to_file(&filename, &window_buffer, true).unwrap();
-        }
     }
     
     fn check_filehash(&mut self, file : &String) -> bool {
