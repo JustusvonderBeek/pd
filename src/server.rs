@@ -118,7 +118,7 @@ impl TBDServer {
 
                 // Create the new state
                 let connection_id = self.generate_conn_id();
-                self.create_state(connection_id, filename, filesize, packet.flow_window, addr);
+                self.create_state(connection_id, filename, filesize, packet.flow_window, packet.byte_offset, addr);
                 
                 // TODO: Case when we disagree with the client flow window?
 
@@ -312,6 +312,13 @@ impl TBDServer {
         let mut remain_block = window_size;
 
         for i in 0..iterations {
+
+            let rand : f64 = 0.35 as f64;
+            let mut engine = rand::thread_rng();
+            if engine.gen_bool(rand) {
+                debug!("Skipping iteration {}", i);
+                continue;
+            }
             // Creating the current packet
             let mut p_buffer = vec![0; DATA_SIZE];
             let start = i as usize * DATA_SIZE;
@@ -437,7 +444,7 @@ impl TBDServer {
         self.states.remove(&connection_id);
     }
 
-    fn create_state(&mut self, connection_id : u32, file_name : &str, size : u64, flow : u16, remote : SocketAddr) {
+    fn create_state(&mut self, connection_id : u32, file_name : &str, size : u64, flow : u16, offset : u64, remote : SocketAddr) {
         self.conn_ids.insert(connection_id);
         let flow = cmp::min(flow, DEFAULT_FLOW_WINDOW);
         let state = ConnectionStore {
@@ -446,7 +453,7 @@ impl TBDServer {
             flow_window : flow,
             file : String::from(file_name),
             file_size : size,
-            sent : 0,
+            sent : offset,
             endpoint : remote,
         };
         self.states.insert(connection_id, state);
