@@ -163,8 +163,8 @@ impl DataPacket {
 #[derive(Clone, Debug)]
 pub struct AckPacket {
     pub connection_id : u32,     // on the wire just 24 Bits
-    pub block_id : u32,       // 32 Bit
     pub fields : u8,
+    pub block_id : u32,       // 32 Bit
     pub flow_window : u16,
     pub length : u16,
     pub sid_list : Vec<u16>
@@ -199,15 +199,20 @@ impl AckPacket {
             return Err("Parsing ACK Packet");
         }
         let mut sid_list : Vec<u16> = Vec::new();
-        for n in (12..buffer.len()).step_by(2){
-            sid_list.push(BigEndian::read_u16(&buffer[n..n+2]));
+        let ack_length : u16 = BigEndian::read_u16(&buffer[10..12]);
+        for n in (12..12 + (ack_length as usize) * 2).step_by(2){
+            let cur_sid = BigEndian::read_u16(&buffer[n..n+2]);
+            if cur_sid == 0{
+                return Err("Zero is an invalid SID in ACK Packet.");
+            }
+            sid_list.push(cur_sid);
         }
         Ok (AckPacket {
             connection_id : u32::from_be_bytes(con_id),
             fields : buffer [3],
             block_id : BigEndian::read_u32(&buffer[4..8]),
             flow_window : BigEndian::read_u16(&buffer[8..10]),
-            length : BigEndian::read_u16(&buffer[10..12]),
+            length : ack_length,
             sid_list : sid_list
         } )
     }
