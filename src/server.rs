@@ -181,18 +181,40 @@ impl TBDServer {
                         }
                     };
 
-                    let t = &self.states.get(&ack.connection_id);
-                    let state = match t {
-                        Some(s) => s.to_owned(),
-                        None => {
-                            error!("Connection with ID {} does not exists", ack.connection_id);
+                    if ack.length > 0 {
+                        
+                        self.handle_retransmission(&sock, &ack.sid_list, &connection_id);
+
+                        // We have to do it this way because Rust is shiiit
+                        let mut state = match self.states.get_mut(&ack.connection_id) {
+                            Some(s) => s,
+                            None => {
+                                error!("Connection with ID {} does not exists", ack.connection_id);
+                                continue;
+                            }
+                        };
+
+                        // Update connection parameter
+                        state.block_id += 1;
+                        state.sent = DATA_SIZE as u64 * state.flow_window as u64;
+                        
+                        if state.sent > state.file_size {
+                            info!("File {} successfully transferred! Removing state...", state.file);
+                            self.remove_state(connection_id);
                             continue;
                         }
-                    };
-
-                    if ack.length > 0 {
-                        self.handle_retransmission();
+                        
+                        self.send_next_block(&connection_id, &sock);
                     } else {
+
+                        let mut state = match self.states.get_mut(&ack.connection_id) {
+                            Some(s) => s,
+                            None => {
+                                error!("Connection with ID {} does not exists", ack.connection_id);
+                                continue;
+                            }
+                        };
+
                         // Advance the parameter because of successfull transmission
                         debug!("Successfully transmitted block {} of connection {}", state.block_id, connection_id);
                         
@@ -211,17 +233,9 @@ impl TBDServer {
                             flow_window = MAX_FLOW_WINDOW;
                         }
 
-                        let new_state = ConnectionStore {
-                            state : ConnectionState::Transfer,
-                            block_id : state.block_id + 1,
-                            flow_window : flow_window,
-                            file_size : state.file_size,
-                            file : String::from(&state.file),
-                            sent : sent,
-                            endpoint : state.endpoint,
-                        };
-
-                        self.states.insert(connection_id, new_state);
+                        state.sent = sent;
+                        state.block_id += 1;
+                        state.flow_window = flow_window;
 
                         self.send_next_block(&connection_id, &sock);
                     }
@@ -346,8 +360,22 @@ impl TBDServer {
         (iterations, window_buffer)
     }
 
-    fn handle_retransmission(&mut self) {
+    fn handle_retransmission(&mut self, sock : &UdpSocket, sid : &Vec<u16>, connection_id : &u32) {
+        let state = match self.states.get(&connection_id) {
+            Some(s) => s,
+            None => {
+                return;
+            }
+        };
 
+        for seq in sid {
+            let p_buffer = vec![0; DATA_SIZE];
+
+            let data = DataPacket::serialize(&connection_id, &state.block_id, seq, &p_buffer);
+            send_data(&data, &sock, &state.endpoint.to_string());
+        }
+
+        // TODO: Maybe find a way to outsmart rust and update the params in here
     }
 
     fn generate_conn_id(&mut self) -> u32 {
@@ -379,6 +407,19 @@ impl TBDServer {
         };
         self.states.insert(connection_id, state);
     }
+
+    fn update_state(&mut self, connection_id : u32, block_id : u32, flow_window : u16, sent : u64) {
+        let mut state = match self.states.get_mut(&connection_id) {
+            Some(s) => s,
+            None => {
+                warn!("For the connection {} no state can be found", connection_id);
+                return;
+            }
+        };
+        state.block_id = block_id;
+        state.flow_window = flow_window;
+        state.sent = sent;
+    }   
 
     fn sleep_n_sec(&self, sec : u64) {
         let duration = time::Duration::from_secs(sec);
