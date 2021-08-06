@@ -8,7 +8,7 @@ const MAX_PACKET_SIZE : u64 = 1300;
 // TODO: In general remove all parameters from the function definitions that are constant anyways (e.g. connection id in a request)
 // TODO: Adapt size of the packets in serialize and deserialize. Either make the all fixed length or match the check for the length with the real length. Currently the program is throwing constant errors.
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum PacketType {
     Request,
     Response,
@@ -80,7 +80,7 @@ impl ResponsePacket {
     pub fn serialize(connection_id : &u32, block_id : &u32, file_hash : &[u8; 32], file_size : &u64) -> Vec<u8>{
         let con_id_u8s = connection_id.to_be_bytes();
         let con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
-        let fields : u8 = 0b00000000;
+        let fields : u8 = 0b10000000;
         let mut buffer : Vec<u8> = Vec::with_capacity(48 as usize);
         buffer.extend_from_slice(&con_id);
         buffer.push(fields);
@@ -165,13 +165,13 @@ pub struct AckPacket {
     pub fields : u8,
     pub flow_window : u16,
     pub length : u16,
-    pub sid_list : Vec<u32>
+    pub sid_list : Vec<u16>
 }
 
 
 impl AckPacket {
     /// Creates a byte representation of a ACK packet with given parameters in an u8 vector
-    pub fn serialize(connection_id : &u32, block_id : &u32, flow_window : &u16, length : &u16, sid_list : &Vec<u32>) -> Vec<u8> {
+    pub fn serialize(connection_id : &u32, block_id : &u32, flow_window : &u16, length : &u16, sid_list : &Vec<u16>) -> Vec<u8> {
         // TODO: Add a check if the sid_list is too long here
         let con_id_u8s = connection_id.to_be_bytes();
         let con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
@@ -192,13 +192,13 @@ impl AckPacket {
     pub fn deserialize(buffer : &[u8]) -> Result<AckPacket, &'static str> {
         let con_id : [u8; 4] = [0, buffer[0], buffer[1], buffer[2]];
         // Check if list is divisible by 4
-        if (buffer.len() - 12) % 4 != 0{
+        if (buffer.len() - 12) % 2 != 0{
             println!("Could not parse ACK Packet List had invalid length for parsing");
             return Err("Parsing ACK Packet");
         }
-        let mut sid_list : Vec<u32> = Vec::new();
-        for n in (12..buffer.len()).step_by(4){
-            sid_list.push(BigEndian::read_u32(&buffer[n..n+4]));
+        let mut sid_list : Vec<u16> = Vec::new();
+        for n in (12..buffer.len()).step_by(2){
+            sid_list.push(BigEndian::read_u16(&buffer[n..n+2]));
         }
         Ok (AckPacket {
             connection_id : u32::from_be_bytes(con_id),
@@ -368,6 +368,30 @@ pub fn check_packet_type(packet : &Vec<u8>, p_type : PacketType) -> bool {
     }
 }
 
+pub fn get_packet_type_client(packet : &Vec<u8>) -> PacketType {
+    if packet.len() < 10{
+        return PacketType::None;
+    }
+    let fields : u8 = packet[3];
+    println!("{:x} {:x}", fields, 0b01000000);
+    match fields as u8 {
+        0b01000000 => return PacketType::Error,
+        0b10000000 => return PacketType::Response,
+        // This case distinguishes Data and Metadata
+        0b00000000 => {
+            let sequence_id : u16 = BigEndian::read_u16(&packet[8..10]);
+            if sequence_id == 0{
+                return PacketType::Metadata;
+            }
+            return PacketType::Data;
+        },
+        _ => {
+            debug!("No type matched Fields were {}", fields);
+            return PacketType::None;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,7 +423,7 @@ mod tests {
             0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28];
         let base : ResponsePacket = ResponsePacket{
             connection_id : 0x0,    // Needs to be 0 on connection establishment
-            fields : 0x0,
+            fields : 0b10000000,
             block_id : 0x22334455,
             file_hash : file_hash,
             file_size : 0x40000
@@ -439,7 +463,7 @@ mod tests {
 
     #[test]
     fn testAckPacket(){
-        let mut sid_list : Vec<u32> = Vec::new();
+        let mut sid_list : Vec<u16> = Vec::new();
         for i in 0..32 {
             sid_list.push(i);
         }
@@ -497,5 +521,62 @@ mod tests {
         assert_eq!(deser.fields, base.fields);
         assert_eq!(deser.block_id, base.block_id);
         assert_eq!(deser.error_code, base.error_code);
+    }
+
+    #[test]
+    fn test_get_packet_client(){
+        let base : ErrorPacket = ErrorPacket{
+            connection_id : 0x2244,
+            fields : 0b01000000,
+            block_id : 0x22334455,
+            error_code : 0x12
+        };
+        let ser = ErrorPacket::serialize(&base.connection_id, 
+            &base.block_id, &base.error_code);
+        let mut check : PacketType = get_packet_type_client(&ser);
+        println!("{:?}", check);
+        assert_eq!(check, PacketType::Error);
+        let base : MetadataPacket = MetadataPacket{
+            connection_id : 0x2244,
+            fields : 0b00000000,
+            block_id : 0x22334455,
+            sequence_id : 0x0,      // Needs to be 0 on connection establishment
+            new_block_size : 0x8
+        };
+        let ser = MetadataPacket::serialize(&base.connection_id, 
+            &base.block_id, &base.new_block_size);
+        check = get_packet_type_client(&ser);
+        assert_eq!(check, PacketType::Metadata);
+        let mut data : Vec<u8> = Vec::new();
+        for i in 0..32 {
+            data.push(i);
+        }
+        let base : DataPacket = DataPacket{
+            connection_id : 0x0,    // Needs to be 0 on connection establishment
+            fields : 0x0,
+            block_id : 0x22334455,
+            sequence_id : 0x3355,
+            data : data
+        };
+        let ser = DataPacket::serialize(&base.connection_id, 
+            &base.block_id, &base.sequence_id, &base.data);
+        check = get_packet_type_client(&ser);
+        assert_eq!(check, PacketType::Data);
+        let file_hash : [u8;32] = [0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,
+            0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,
+            0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,
+            0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28];
+        let base : ResponsePacket = ResponsePacket{
+            connection_id : 0x0,    // Needs to be 0 on connection establishment
+            fields : 0b10000000,
+            block_id : 0x22334455,
+            file_hash : file_hash,
+            file_size : 0x40000
+        };
+        let ser = ResponsePacket::serialize(&base.connection_id, 
+            &base.block_id, &base.file_hash, &base.file_size);
+            check = get_packet_type_client(&ser);
+            assert_eq!(check, PacketType::Response);
+        
     }
 }
