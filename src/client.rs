@@ -357,17 +357,29 @@ impl TBDClient {
         self.file_hash.iter().zip(filehash.iter()).all(|(a,b)| a == b)
     }
 
-    fn write_data_to_file(&mut self, file: &String, data : &Vec<u8>, new : bool) -> std::io::Result<()> {
+    fn write_data_to_file(&mut self, file: &String, data : &Vec<u8>, trunc : bool) -> std::io::Result<()> {
         let mut file = String::from(file);
         file.push_str(".new");
-        let mut output = match OpenOptions::new().truncate(new).write(true).create(true).open(&file) {
-            Ok(f) => f,
-            Err(e) => {
-                error!("Failed to create file {}: {}", file, e);
-                return Err(e);
-            }
-        };
-        output.write_all(&data)
+        
+        if trunc {
+            let mut output = match OpenOptions::new().write(true).truncate(true).create(true).open(&file) {
+                Ok(f) => f,
+                Err(e) => {
+                    error!("Failed to create file {}: {}", file, e);
+                    return Err(e);
+                }
+            };
+            return output.write_all(&data);
+        } else {
+            let mut output = match OpenOptions::new().write(true).append(true).create(true).open(&file) {
+                Ok(f) => f,
+                Err(e) => {
+                    error!("Failed to create file {}: {}", file, e);
+                    return Err(e);
+                }
+            };
+            return output.write_all(&data);
+        }
     }
     
     fn decode_error(&self, e : ErrorTypes) {
