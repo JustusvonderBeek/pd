@@ -266,23 +266,30 @@ impl TBDClient {
             // Creating the storage for the next packet
             let mut packet_buffer = vec![0; PACKET_SIZE];
             
-            let mut len : usize = 0;
-            let mut addr : SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
-            if i == 0 {
-                let (x, y) = self.receive_next(sock, &mut packet_buffer);
-                len = x;
-                addr = y;
-            } else {
-                let (x, y) = match self.receive_next_timeout(sock, TIMEOUT, &mut packet_buffer) {
-                    Some(s) => s,
-                    None => {
-                        info!("Connection timed out! Starting retransmission...");
-                        break;
-                    }
-                };
-                len = x;
-                addr = y;
-            }
+            let (len, addr) = match self.receive_next_timeout(sock, TIMEOUT, &mut packet_buffer) {
+                Some(s) => s,
+                None => {
+                    info!("Connection timed out! Starting retransmission...");
+                    break;
+                }
+            };
+            // let mut len : usize = 0;
+            // let mut addr : SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
+            // if i == 0 {
+            //     let (x, y) = self.receive_next(sock, &mut packet_buffer);
+            //     len = x;
+            //     addr = y;
+            // } else {
+            //     let (x, y) = match self.receive_next_timeout(sock, TIMEOUT, &mut packet_buffer) {
+            //         Some(s) => s,
+            //         None => {
+            //             info!("Connection timed out! Starting retransmission...");
+            //             break;
+            //         }
+            //     };
+            //     len = x;
+            //     addr = y;
+            // }
             // debug!("Received {} bytes from {}:\n{}", len, addr, pretty_hex(&packet_buffer));
             debug!("Received {} bytes from {}", len, addr);
             
@@ -504,6 +511,8 @@ impl TBDClient {
         let ack = AckPacket::serialize(&self.connection_id, &self.block_id, &self.flow_window, &0, &sid_vec);
         debug!("Created ACK: {}", pretty_hex(&ack));
         send_data(&ack, &sock, &self.server);
+
+        // Writing the buffers is done by the calling function
     }
     
     fn check_filehash(&mut self, file : &String) -> bool {
