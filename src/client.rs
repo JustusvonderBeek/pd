@@ -1,9 +1,10 @@
 use pretty_hex::*;
-use std::io::Write;
+use std::io::{Write};
 use std::fs::{OpenOptions, File};
 use std::fs;
-use std::net::{UdpSocket, SocketAddr};
+use std::net::{UdpSocket, SocketAddr, Ipv4Addr, IpAddr};
 use std::{thread, time, cmp};
+use std::time::Duration;
 use std::result::Result;
 use std::collections::LinkedList;
 use math::round::ceil;
@@ -15,9 +16,10 @@ use crate::net_util::*;
 
 const PACKET_SIZE : usize = 1280;
 const DATA_SIZE : usize = 1270;
-const TIMEOUT : u64 = 1;
+const TIMEOUT : u64 = 2;
 const START_FLOW_WINDOW : u16 = 8;
 const DATA_HEADER_SIZE : usize = 10;
+const MAX_RETRANSMISSION : usize = 3;
 
 pub struct TBDClient {
     options : Options,
@@ -158,9 +160,44 @@ impl TBDClient {
     }
 
     fn receive_next(&mut self, sock : &UdpSocket, mut buf : &mut [u8]) -> (usize, SocketAddr) {
+        if sock.read_timeout().unwrap() != None {
+            match sock.set_read_timeout(None) {
+                Ok(s) => {},
+                Err(e) => {
+                    warn!("Failed to reset read timeout: {}", e);
+                }
+            };
+        }
         loop {
             match sock.recv_from(&mut buf) {
                 Ok(r) => break r,
+                Err(e) => {
+                    warn!("Failed to receive data: {}", e);
+                    continue;
+                }
+            };
+        }
+    }
+
+    fn receive_next_timeout(&mut self, sock : &UdpSocket, timeout : u64, mut buf : &mut [u8]) -> Option<(usize, SocketAddr)> {
+        let dur = Duration::from_secs(timeout);
+        match sock.set_read_timeout(Some(dur)) {
+            Ok(_) => {},
+            Err(e) => {
+                warn!("Failed to set read timeout {}", e);
+                return None;
+            }
+        }
+        loop {
+            
+            match sock.recv_from(&mut buf) {
+                Ok(r) => break Some(r),
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    return None;
+                },
+                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                    return None;
+                },
                 Err(e) => {
                     warn!("Failed to receive data: {}", e);
                     continue;
@@ -229,7 +266,23 @@ impl TBDClient {
             // Creating the storage for the next packet
             let mut packet_buffer = vec![0; PACKET_SIZE];
             
-            let (len, addr) = self.receive_next(sock, &mut packet_buffer);
+            let mut len : usize = 0;
+            let mut addr : SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
+            if i == 0 {
+                let (x, y) = self.receive_next(sock, &mut packet_buffer);
+                len = x;
+                addr = y;
+            } else {
+                let (x, y) = match self.receive_next_timeout(sock, TIMEOUT, &mut packet_buffer) {
+                    Some(s) => s,
+                    None => {
+                        info!("Connection timed out! Starting retransmission...");
+                        break;
+                    }
+                };
+                len = x;
+                addr = y;
+            }
             // debug!("Received {} bytes from {}:\n{}", len, addr, pretty_hex(&packet_buffer));
             debug!("Received {} bytes from {}", len, addr);
             
@@ -302,7 +355,7 @@ impl TBDClient {
 
         if list.len() != 0 {
             info!("Missing {} packets. Starting retransmission.", list.len());
-            self.handle_retransmission(&mut window_buffer);
+            self.handle_retransmission(&sock, &mut window_buffer, &list, filename);
         } else {
             // Things we only do in a successful transmission
             
@@ -329,8 +382,136 @@ impl TBDClient {
         }
     }
 
-    fn handle_retransmission(&mut self, window_buffer : &mut Vec<u8>) {
-        
+    fn handle_retransmission(&mut self, sock : &UdpSocket, window_buffer : &mut Vec<u8>, sid : &LinkedList<u16>, filename : &String) {
+        // Waiting for the data
+        for i in 0..MAX_RETRANSMISSION {
+
+            // Sending the NACK
+            let mut sid_vec : Vec<u16> = Vec::with_capacity(sid.len());
+            for i in sid {
+                sid_vec.push(*i);
+            }
+
+            let nack = AckPacket::serialize(&self.connection_id, &self.block_id, &self.flow_window, &(sid.len() as u16), &sid_vec);
+            match sock.send_to(&nack, &self.server) {
+                Ok(_) => {},
+                Err(e) => {
+                    error!("Failed to send NACK packet: {}", e);
+                    error!("Exiting file transfer");
+                    std::process::exit(1);
+                }
+            }
+
+            for j in sid {
+                let mut packet_buffer = vec![0; PACKET_SIZE];
+                let mut len : usize = 0;
+                let mut addr : SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
+                if i == 0 {
+                    let (x, y) = self.receive_next(sock, &mut packet_buffer);
+                    len = x;
+                    addr = y;
+                } else {
+                    let (x, y) = match self.receive_next_timeout(sock, TIMEOUT, &mut packet_buffer) {
+                        Some(s) => s,
+                        None => {
+                            info!("Connection timed out! Starting retransmission...");
+                            break;
+                        }
+                    };
+                    len = x;
+                    addr = y;
+                }
+
+                debug!("Received {} bytes from {}", len, addr);
+                
+                if check_packet_type(&packet_buffer.to_vec(), PacketType::Error) {
+                    let err = match ErrorPacket::deserialize(&packet_buffer[0..len]) {
+                        Ok(e) => e,
+                        Err(e) => {
+                            error!("Failed to deserialize error packet: {}", e);
+                            // Close the connection. Because we cannot do anything more
+                            std::process::exit(1);
+                        }
+                    };
+                    if err.connection_id == self.connection_id {
+                        error!("Received an error instead of a data packet: ErrorCode == {}", err.error_code);
+                        // Abort the file transfer
+                        std::process::exit(0);
+                    } else {
+                        warn!("Received an error with wrong connection id");
+                        continue;
+                    }
+                }
+    
+                if !check_packet_type(&packet_buffer.to_vec(), PacketType::Data) {
+                    error!("Expected data packet but got something else!");
+                    continue;
+                }
+    
+                let data = match DataPacket::deserialize(&packet_buffer[0..len]) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        warn!("Failed to deserialize the data packet: {}", e);
+                        // This should be fixable in the retransmission (missing seq id)
+                        continue;
+                    }
+                };
+    
+                if data.connection_id != self.connection_id {
+                    error!("Connection IDs do not match!");
+                    send_error(&sock, &addr, ErrorTypes::Abort);
+                    // Ignore
+                    continue;
+                }
+    
+                if data.block_id != self.block_id {
+                    warn!("Block IDs do not match");
+                    // Ignore
+                    continue;
+                }
+    
+                let start = (data.sequence_id - 1) as usize * DATA_SIZE as usize;
+                // Copy only what we received (10 bytes header) - expect this to be the last packet
+                let p_size = cmp::min(len - DATA_HEADER_SIZE, (self.file_size - self.received) as usize);
+                let end = start + p_size;
+                debug!("Start: {} P_size: {} End: {}", start, p_size, end);
+                window_buffer[start..end].copy_from_slice(&data.data[0..p_size]);
+                
+                self.remove_from_list(&sid, data.sequence_id);
+                
+                if sid.len() == 0 {
+                    break;
+                }
+
+            }
+
+            if sid.len() == 0 {
+                // Finished transfer
+                break;
+            }
+
+            if i + 1 == MAX_RETRANSMISSION {
+                error!("Failed to receive all packets in the retransmission! Terminating...");
+                std::process::exit(1);
+            }
+        }
+
+        // Sending the acknowledgment
+        let sid = Vec::new();
+        self.flow_window = ceil(self.flow_window as f64 / 2.0, 0) as u16;
+        let ack = AckPacket::serialize(&self.connection_id, &self.block_id, &self.flow_window, &0, &sid);
+        debug!("Created ACK: {}", pretty_hex(&ack));
+        send_data(&ack, &sock, &self.server);
+
+        self.block_id += 1;
+
+        // Writing the current block in correct order into the file
+        if self.block_id > 1 {
+            self.write_data_to_file(&filename, &window_buffer, false).unwrap();
+        }
+        else {
+            self.write_data_to_file(&filename, &window_buffer, true).unwrap();
+        }
     }
     
     fn check_filehash(&mut self, file : &String) -> bool {
