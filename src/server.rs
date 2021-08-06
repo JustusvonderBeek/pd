@@ -289,6 +289,15 @@ impl TBDServer {
 
         debug!("Making {} iterations sending {} bytes total in this block", iterations, window_size);
         
+        let offset = match file.seek(SeekFrom::Start(connection.sent)) {
+            Ok(o) => o,
+            Err(e) => {
+                warn!("Failed to read file at offset {}: {}", connection.sent, e);
+                send_error(sock, &connection.endpoint, ErrorTypes::FileUnavailable);
+                return;
+            }
+        };
+
         let mut window_buffer = vec![0; window_size];
         match file.read_exact(&mut window_buffer) {
             Ok(_) => debug!("Read {} bytes from file: {}", window_size, filename),
@@ -357,6 +366,7 @@ impl TBDServer {
             debug!("Iterations: {}", res);
             iterations = ceil(res, 0) as u16;
         }
+
         (iterations, window_buffer)
     }
 
