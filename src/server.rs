@@ -173,7 +173,7 @@ impl TBDServer {
                 };
 
                 if check_packet_type(&packet, PacketType::Ack) {
-                    let ack = match AckPacket::deserialize(&packet) {
+                    let ack = match AckPacket::deserialize(&packet[0..len]) {
                         Ok(a) => a,
                         Err(e) => {
                             error!("Failed to deserialize ack packet: {}", e);
@@ -195,8 +195,6 @@ impl TBDServer {
                         };
 
                         // Update connection parameter
-                        state.block_id += 1;
-                        state.sent = DATA_SIZE as u64 * state.flow_window as u64;
                         state.flow_window = ceil(state.flow_window as f64 / 2.0, 0) as u16;
                         
                         if state.sent >= state.file_size {
@@ -260,7 +258,7 @@ impl TBDServer {
             }
         };
         debug!("Received {} bytes from {}", len, addr);
-        debug!("{}", pretty_hex(&buf));
+        // debug!("{}", pretty_hex(&buf));
 
         Ok((buf.to_vec(), len, addr))
     }
@@ -313,7 +311,7 @@ impl TBDServer {
 
         for i in 0..iterations {
 
-            let rand : f64 = 0.35 as f64;
+            let rand : f64 = 0.05 as f64;
             let mut engine = rand::thread_rng();
             if engine.gen_bool(rand) {
                 debug!("Skipping iteration {}", i);
