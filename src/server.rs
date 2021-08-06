@@ -120,6 +120,8 @@ impl TBDServer {
                 let connection_id = self.generate_conn_id();
                 self.create_state(connection_id, filename, filesize, packet.flow_window, addr);
                 
+                // TODO: Case when we disagree with the client flow window?
+
                 // Construct the answer packet
                 let resp = ResponsePacket::serialize(&connection_id, &0, &filehash, &filesize);
                 match sock.send_to(&resp, addr) {
@@ -195,12 +197,13 @@ impl TBDServer {
                         debug!("Successfully transmitted block {} of connection {}", state.block_id, connection_id);
                         
                         // Check if the file transfer is complete and the state can be deleted
-                        let sent = (DATA_SIZE * state.flow_window as usize) as u64; // Over approximation (but if it is too much this should still be fine)
+                        let mut sent = (DATA_SIZE * state.flow_window as usize) as u64; // Over approximation (but if it is too much this should still be fine)
                         if state.sent + sent > state.file_size {
                             info!("File {} successfully transferred! Removing state...", state.file);
-                            // self.remove_state(connection_id);
+                            self.remove_state(connection_id);
                             continue;
                         }
+                        sent = state.sent + sent;
 
                         // Cap the maximal flow window
                         let mut flow_window = ack.flow_window;
@@ -219,6 +222,8 @@ impl TBDServer {
                         };
 
                         self.states.insert(connection_id, new_state);
+
+                        self.send_next_block(&connection_id, &sock);
                     }
                     continue;
                 }
