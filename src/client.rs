@@ -327,7 +327,7 @@ impl TBDClient {
             }
 
             if data.block_id != self.block_id {
-                warn!("Block IDs do not match");
+                warn!("Block IDs do not match. Expected {} got {}", self.block_id, data.block_id);
                 // Ignore
                 continue;
             }
@@ -466,7 +466,7 @@ impl TBDClient {
                 }
     
                 if data.block_id != self.block_id {
-                    warn!("Block IDs do not match");
+                    warn!("Block IDs do not match. Expected {} got {}", self.block_id, data.block_id);
                     // Ignore
                     continue;
                 }
