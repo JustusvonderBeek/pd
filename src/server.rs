@@ -2,7 +2,7 @@
 use std::collections::{HashSet, HashMap};
 use std::net::{UdpSocket, SocketAddr};
 use pretty_hex::*;
-use std::io::Read;
+use std::io::{prelude::*, Read, SeekFrom};
 use std::fs;
 use std::fs::File;
 use rand::Rng;
@@ -197,14 +197,14 @@ impl TBDServer {
                         // Update connection parameter
                         state.block_id += 1;
                         state.sent = DATA_SIZE as u64 * state.flow_window as u64;
+                        state.flow_window = ceil(state.flow_window as f64 / 2.0, 0) as u16;
                         
-                        if state.sent > state.file_size {
+                        if state.sent >= state.file_size {
                             info!("File {} successfully transferred! Removing state...", state.file);
                             self.remove_state(connection_id);
                             continue;
                         }
                         
-                        self.send_next_block(&connection_id, &sock);
                     } else {
 
                         let mut state = match self.states.get_mut(&ack.connection_id) {
@@ -369,7 +369,41 @@ impl TBDServer {
         };
 
         for seq in sid {
-            let p_buffer = vec![0; DATA_SIZE];
+            // Compute the packet size
+            let mut p_size = DATA_SIZE;
+            let offset = state.sent + ((seq - 1) as u64 * DATA_SIZE as u64);
+            if state.file_size < state.sent + (*seq as u64 * DATA_SIZE as u64) {
+                p_size = state.file_size as usize - offset as usize;
+            }
+
+            let mut p_buffer = vec![0; p_size];
+
+            // Read in the file at the specific offset
+            let mut file = match File::open(&state.file) {
+                Ok(f) => f,
+                Err(e) => {
+                    error!("Failed to read in {}!", state.file);
+                    return;
+                }
+            };
+            let offset = match file.seek(SeekFrom::Start(offset)) {
+                Ok(o) => o,
+                Err(e) => {
+                    warn!("Failed to read file at offset {}: {}", state.sent, e);
+                    send_error(sock, &state.endpoint, ErrorTypes::FileUnavailable);
+                    return;
+                }
+            };
+
+            match file.read_exact(&mut p_buffer) {
+                Ok(_) => debug!("Read {} bytes from file: {}", p_size, state.file),
+                Err(_) => {
+                    error!("Failed to read in the next block of file: {}", state.file);
+                    send_error(&sock, &state.endpoint, ErrorTypes::Abort);
+                    return;
+                }
+            };
+
 
             let data = DataPacket::serialize(&connection_id, &state.block_id, seq, &p_buffer);
             send_data(&data, &sock, &state.endpoint.to_string());
