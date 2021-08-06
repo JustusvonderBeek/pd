@@ -1,11 +1,14 @@
 use pretty_hex::*;
 use std::io::Write;
-use std::fs::OpenOptions;
+use std::fs::{OpenOptions, File};
+use std::fs;
 use std::net::{UdpSocket, SocketAddr};
 use std::{thread, time, cmp};
 use std::result::Result;
 use std::collections::LinkedList;
 use math::round::ceil;
+use sha2::{Sha256, Digest};
+use std::convert::TryInto;
 use crate::cmdline_handler::Options;
 use crate::packets::*;
 use crate::net_util::*;
@@ -115,7 +118,21 @@ impl TBDClient {
             self.file_hash = res.file_hash;
             self.file_size = res.file_size;
 
-            self.receive_data(&sock, filename);        
+            loop {
+                self.receive_data(&sock, &filename);        
+                if self.received >= self.file_size {
+                    break;
+                }
+            }
+
+
+            let eq = self.check_filehash(&filename);
+            if !eq {
+                error!("The file is corrupted. Hashes do not match!");
+            } else {
+                info!("File hash is correct.");
+            }
+            
         }
 
         info!("Finished file transfer");
@@ -192,7 +209,7 @@ impl TBDClient {
         (iterations, window_size as usize)
     }
 
-    fn receive_data(&mut self, sock : &UdpSocket, filename : String) {
+    fn receive_data(&mut self, sock : &UdpSocket, filename : &String) {
         info!("Starting file transmission...");
 
         // Compute the amount of bytes left
@@ -304,17 +321,46 @@ impl TBDClient {
         self.block_id += 1;
 
         // Writing the current block in correct order into the file
-        self.write_data_to_file(&filename, &window_buffer).unwrap();
+        if self.block_id > 1 {
+            self.write_data_to_file(&filename, &window_buffer, false).unwrap();
+        }
+        else {
+            self.write_data_to_file(&filename, &window_buffer, true).unwrap();
+        }
     }
 
     fn handle_retransmission(&mut self, window_buffer : &mut Vec<u8>) {
         
     }
     
-    fn write_data_to_file(&mut self, file: &String, data : &Vec<u8>) -> std::io::Result<()> {
+    fn check_filehash(&mut self, file : &String) -> bool {
+        let file = match fs::read(file) {
+            Ok(f) => f,
+            Err(e) => {
+                warn!("Failed to read in the file {}\n{}", file, e);
+                return false;
+            },
+        };
+        // Compute the checksum
+        let mut hasher = Sha256::new();
+        hasher.update(&file);
+        let hash = hasher.finalize();
+        debug!("Generated hash: {}", pretty_hex(&hash));
+        let filehash : [u8;32] = match hash.as_slice().try_into() {
+            Ok(h) => h,
+            Err(e) => {
+                warn!("Failed to convert hash: {}", e);
+                return false;
+            }
+        };
+        
+        self.file_hash.iter().zip(filehash.iter()).all(|(a,b)| a == b)
+    }
+
+    fn write_data_to_file(&mut self, file: &String, data : &Vec<u8>, new : bool) -> std::io::Result<()> {
         let mut file = String::from(file);
         file.push_str(".new");
-        let mut output = match OpenOptions::new().truncate(true).write(true).create(true).open(&file) {
+        let mut output = match OpenOptions::new().truncate(new).write(true).create(true).open(&file) {
             Ok(f) => f,
             Err(e) => {
                 error!("Failed to create file {}: {}", file, e);
