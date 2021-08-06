@@ -258,6 +258,9 @@ impl TBDClient {
         // Prepare working vars
         let mut i = 0;
 
+        // Stores the offset in the context of the etire file
+        let mut block_offset = self.received;
+
         debug!("Making {} iterations in the current block {}", iterations, self.block_id);
         let mut list = self.create_ack_list(iterations);
         
@@ -336,9 +339,9 @@ impl TBDClient {
             // - 1 because the seq id 0 is reserved for metadata but we still want to use the space
             let start = (data.sequence_id - 1) as usize * DATA_SIZE as usize;
             // Copy only what we received (10 bytes header) - expect this to be the last packet
-            let p_size = cmp::min(len - DATA_HEADER_SIZE, (self.file_size - self.received) as usize);
+            let p_size = cmp::min(len - DATA_HEADER_SIZE, (self.file_size - start as u64 - block_offset) as usize);
             let end = start + p_size;
-            debug!("Start: {} P_size: {} End: {}", start, p_size, end);
+            debug!("Start: {} P_size: {} End: {} Filesize {} Blockoffset {}", start, p_size, end, self.file_size, block_offset);
             window_buffer[start..end].copy_from_slice(&data.data[0..p_size]);
 
             // Ack handling
