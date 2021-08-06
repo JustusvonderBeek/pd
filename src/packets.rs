@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 use byteorder::{BigEndian, ByteOrder};
-use std::convert::AsMut;
-use std::error::Error;
 
 const MAX_PACKET_SIZE : u64 = 1300;
 
@@ -392,12 +390,29 @@ pub fn get_packet_type_client(packet : &Vec<u8>) -> PacketType {
     }
 }
 
+pub fn get_packet_type_server(packet : &Vec<u8>) -> PacketType {
+    let con_id = [0, packet[0], packet[1], packet[2]];
+    let connection_id = u32::from_be_bytes(con_id);
+    if connection_id == 0{
+        return PacketType::Request;
+    }
+    let fields : u8 = packet[3];
+    match fields as u8 {
+        0b01000000 => return PacketType::Error,
+        0b10000000 => return PacketType::Ack,
+        _ => {
+            debug!("No type matched Fields were {}", fields);
+            return PacketType::None;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn testRequestPacket() {
+    fn test_request_packet() {
         let base : RequestPacket = RequestPacket{
             connection_id : 0x0,    // Needs to be 0 on connection establishment
             fields : 0x0,
@@ -416,7 +431,7 @@ mod tests {
     }
 
     #[test]
-    fn testResponsePacket(){
+    fn test_response_packet(){
         let file_hash : [u8;32] = [0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,
             0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,
             0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,
@@ -439,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn testDataPacket(){
+    fn test_data_packet(){
         let mut data : Vec<u8> = Vec::new();
         for i in 0..32 {
             data.push(i);
@@ -462,14 +477,14 @@ mod tests {
     }
 
     #[test]
-    fn testAckPacket(){
+    fn test_ack_packet(){
         let mut sid_list : Vec<u16> = Vec::new();
         for i in 0..32 {
             sid_list.push(i);
         }
 
         let base : AckPacket = AckPacket{
-            connection_id : 0x0,    // Needs to be 0 on connection establishment
+            connection_id : 0x3355,    // Needs to be 0 on connection establishment
             fields : 0b10000000,
             block_id : 0x22334455,
             flow_window : 0x4,
@@ -488,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn testMetadataPacket(){
+    fn test_metadata_packet(){
         let base : MetadataPacket = MetadataPacket{
             connection_id : 0x2244,
             fields : 0b00000000,
@@ -507,7 +522,7 @@ mod tests {
     }
 
     #[test]
-    fn testErrorPacket(){
+    fn test_error_packet(){
         let base : ErrorPacket = ErrorPacket{
             connection_id : 0x2244,
             fields : 0b01000000,
@@ -577,6 +592,46 @@ mod tests {
             &base.block_id, &base.file_hash, &base.file_size);
             check = get_packet_type_client(&ser);
             assert_eq!(check, PacketType::Response);
-        
+    }
+
+    #[test]
+    fn test_get_packet_server(){
+        let base : ErrorPacket = ErrorPacket{
+            connection_id : 0x2244,
+            fields : 0b01000000,
+            block_id : 0x22334455,
+            error_code : 0x12
+        };
+        let ser = ErrorPacket::serialize(&base.connection_id, 
+            &base.block_id, &base.error_code);
+        let mut check : PacketType = get_packet_type_server(&ser);
+        assert_eq!(check, PacketType::Error);
+        let base : RequestPacket = RequestPacket{
+            connection_id : 0x0,    // Needs to be 0 on connection establishment
+            fields : 0x0,
+            byte_offset : 0x0,
+            flow_window : 0x10,
+            file_name : String::from("testfile.txt")
+        };
+        let ser = RequestPacket::serialize(&base.byte_offset, 
+            &base.flow_window, &base.file_name);
+        check = get_packet_type_server(&ser);
+        assert_eq!(check, PacketType::Request);
+        let mut sid_list : Vec<u16> = Vec::new();
+        for i in 0..32 {
+            sid_list.push(i);
+        }
+        let base : AckPacket = AckPacket{
+            connection_id : 0x3355,    // Needs to be 0 on connection establishment
+            fields : 0b10000000,
+            block_id : 0x22334455,
+            flow_window : 0x4,
+            length : 0x20,
+            sid_list : sid_list
+        };
+        let ser = AckPacket::serialize(&base.connection_id, 
+            &base.block_id, &base.flow_window, &base.length, &base.sid_list);
+        check = get_packet_type_server(&ser);
+        assert_eq!(check, PacketType::Ack);
     }
 }
