@@ -357,7 +357,7 @@ pub fn check_packet_type(packet : &Vec<u8>, p_type : PacketType) -> bool {
             return connection_id == 0;
         },
         PacketType::Response => {
-            return connection_id != 0 && packet[3] & 0xE0 == 0;
+            return connection_id != 0 && packet[3] & 0b10000000 == 0b10000000;
         }
         _ => {
             warn!("The packet type cannot be found!");
