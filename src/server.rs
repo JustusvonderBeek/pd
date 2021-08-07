@@ -1,21 +1,22 @@
 
-use std::collections::{HashSet, HashMap};
-use std::net::{UdpSocket, SocketAddr};
+use std::{
+    io,
+    io::Result,
+    thread,
+    time,
+    cmp, 
+    fs::File, 
+    collections::HashMap,
+    net::{UdpSocket, SocketAddr},
+    io::{prelude::*, Read, SeekFrom}
+};
 use pretty_hex::*;
-use std::io::{prelude::*, Read, SeekFrom};
-use std::fs;
-use std::fs::File;
 use rand::Rng;
-use sha2::{Sha256, Digest};
-use std::convert::TryInto;
-use std::{thread, time, cmp};
 use math::round::ceil;
 use crate::cmdline_handler::Options;
 use crate::packets::*;
 use crate::utils::*;
 
-const PACKET_SIZE : usize = 1280;
-const DATA_SIZE : usize = 1270;
 const MAX_FLOW_WINDOW : u16 = 100;
 const DEFAULT_FLOW_WINDOW : u16 = 8;
 
@@ -182,6 +183,9 @@ impl TBDServer {
                             }
                         };
 
+                        // TODO: Update the amount of sent bytes
+                        
+
                         // Update connection parameter
                         state.flow_window = ceil(state.flow_window as f64 / 2.0, 0) as u16;
                         
@@ -238,12 +242,12 @@ impl TBDServer {
         }   
     }
 
-    fn send_next_block(&mut self, connection_id : &u32, sock : &UdpSocket) {
+    fn send_next_block(&mut self, connection_id : &u32, sock : &UdpSocket) -> io::Result<()> {
         let connection = match self.states.get(connection_id) {
             Some(v) => v,
             None => {
                 error!("For the connection ID: {} no connection is found!", connection_id);
-                return;
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "No state found"));
             },
         };
 
@@ -251,23 +255,24 @@ impl TBDServer {
         let mut file = match File::open(filename) {
             Ok(f) => f,
             Err(e) => {
-                warn!("Failed to read in the file {}\n{}", filename, e);
+                warn!("Failed to read in the file {}", filename);
+                warn!("{}", e);
                 send_error(&sock, &connection.endpoint, ErrorTypes::Abort);
-                return;
+                return Err(io::Error::new(io::ErrorKind::NotFound, "File cannot be read"));
             },
         };
 
         // Preparing the data for the next block
         let (iterations,window_size) = self.compute_block_params(&connection);
 
-        debug!("Making {} iterations sending {} bytes total in this block", iterations, window_size);
+        debug!("Block {} Iterations {} Sending {}", connection.block_id, iterations, window_size);
         
         let offset = match file.seek(SeekFrom::Start(connection.sent)) {
             Ok(o) => o,
             Err(e) => {
                 warn!("Failed to read file at offset {}: {}", connection.sent, e);
                 send_error(sock, &connection.endpoint, ErrorTypes::FileUnavailable);
-                return;
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "Offset failed"));
             }
         };
 
@@ -277,7 +282,7 @@ impl TBDServer {
             Err(_) => {
                 error!("Failed to read in the next block of file: {}", filename);
                 send_error(&sock, &connection.endpoint, ErrorTypes::Abort);
-                return;
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "Failed to read packet in"));
             }
         };
         
@@ -286,28 +291,23 @@ impl TBDServer {
 
         for i in 0..iterations {
 
-            let rand : f64 = 0.05 as f64;
+            // Debug: Skipping packets
             let mut engine = rand::thread_rng();
-            if engine.gen_bool(rand) {
+            if engine.gen_bool(self.options.p) {
                 debug!("Skipping iteration {}", i);
                 continue;
             }
+
             // Creating the current packet
-            let mut p_buffer = vec![0; DATA_SIZE];
-            let start = i as usize * DATA_SIZE;
-            let mut end = start + DATA_SIZE;
-            
-            // Check if we need to pad the last packet
-            if remain_block < DATA_SIZE {
-                end = start + remain_block;
-                debug!("Pad the last packet with {} bytes", remain_block);
-            }
+            let (packet, size) = match create_next_packet(&remain_block, &window_buffer, &(i as usize)) {
+                Ok(p) => p,
+                Err(e) => {
+                    send_error(&sock, &connection.endpoint, ErrorTypes::Abort);
+                    return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block"));
+                }
+            };
 
-            // Copying the file data in the current packet buffer
-            let p_size = end - start;
-            p_buffer[0..p_size].clone_from_slice(&window_buffer[start..end]);
-
-            let data = DataPacket::serialize(connection_id, &connection.block_id, &(i + 1), &p_buffer);
+            let data = DataPacket::serialize(connection_id, &connection.block_id, &(i + 1), &packet);
             match sock.send_to(&data, connection.endpoint) {
                 Ok(s) => {
                     debug!("Sent {} bytes to {}", s, connection.endpoint); 
@@ -317,15 +317,16 @@ impl TBDServer {
                     error!("Failed to send data to {}: {}", connection.endpoint, e);
                     send_error(&sock, &connection.endpoint, ErrorTypes::Abort);
                     self.remove_state(connection_id.to_owned());
-                    return;
+                    return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block"));
                 }
             };
 
-            remain_block -= p_size;
+            remain_block -= size;
 
             // The changes in the connections stats (flow window, sent, etc.) are only made when the ACK arrives
         }
 
+        Ok(())
     }
 
     fn compute_block_params(&self, connection : &ConnectionStore) -> (u16, usize) {
@@ -350,11 +351,11 @@ impl TBDServer {
         (iterations, window_buffer)
     }
 
-    fn handle_retransmission(&mut self, sock : &UdpSocket, sid : &Vec<u16>, connection_id : &u32) {
+    fn handle_retransmission(&mut self, sock : &UdpSocket, sid : &Vec<u16>, connection_id : &u32) -> io::Result<()> {
         let state = match self.states.get(&connection_id) {
             Some(s) => s,
             None => {
-                return;
+                return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block"));
             }
         };
 
@@ -373,7 +374,7 @@ impl TBDServer {
                 Ok(f) => f,
                 Err(e) => {
                     error!("Failed to read in {}!", state.file);
-                    return;
+                    return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block"));
                 }
             };
             let offset = match file.seek(SeekFrom::Start(offset)) {
@@ -381,7 +382,7 @@ impl TBDServer {
                 Err(e) => {
                     warn!("Failed to read file at offset {}: {}", state.sent, e);
                     send_error(sock, &state.endpoint, ErrorTypes::FileUnavailable);
-                    return;
+                    return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block"));
                 }
             };
 
@@ -390,7 +391,7 @@ impl TBDServer {
                 Err(_) => {
                     error!("Failed to read in the next block of file: {}", state.file);
                     send_error(&sock, &state.endpoint, ErrorTypes::Abort);
-                    return;
+                    return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block"));
                 }
             };
 
@@ -400,6 +401,7 @@ impl TBDServer {
         }
 
         // TODO: Maybe find a way to outsmart rust and update the params in here
+        Ok(())
     }
 
     fn generate_conn_id(&mut self) -> u32 {
