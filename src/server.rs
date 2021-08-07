@@ -129,10 +129,12 @@ impl TBDServer {
                     }
         
                     // Wait a short period of time
-                    self.sleep_n_ms(150);
+                    self.sleep_n_ms(100);
         
                     // Start transfer
-                    self.send_next_block(&connection_id, &sock);
+                    match self.send_next_block(&connection_id, &sock) {
+                        _ => continue,
+                    }
 
                 },
                 // Everything else must be an existing transfer
@@ -188,6 +190,7 @@ impl TBDServer {
 
                         // Update connection parameter
                         state.flow_window = ceil(state.flow_window as f64 / 2.0, 0) as u16;
+                        // TODO: Updating flow window and using the smaller window to compute the sent size later
                         
                         if state.sent >= state.file_size {
                             info!("File {} successfully transferred! Removing state...", state.file);
@@ -242,6 +245,20 @@ impl TBDServer {
         }   
     }
 
+    fn create_new_sid(&self, file_size : u64, sent : u64, flow_window : u16) -> Vec<u16> {
+        let remain = file_size - sent;
+        let mut window_size = flow_window as usize * DATA_SIZE;
+        if window_size > remain as usize {
+            window_size = remain as usize;
+        }
+        let packets = ceil(window_size as f64 / DATA_SIZE as f64, 0) as u16;
+        let mut sid : Vec<u16> = Vec::with_capacity(packets as usize);
+        for i in 1..packets + 1 {
+            sid.push(i);
+        }
+        sid
+    }
+
     fn send_next_block(&mut self, connection_id : &u32, sock : &UdpSocket) -> io::Result<()> {
         let connection = match self.states.get(connection_id) {
             Some(v) => v,
@@ -251,6 +268,31 @@ impl TBDServer {
             },
         };
 
+        let sid = self.create_new_sid(connection.file_size, connection.sent, connection.flow_window);
+        self.send_block(sock, &sid, connection_id, connection.sent)
+    }
+
+
+    fn handle_retransmission(&mut self, sock : &UdpSocket, sid : &Vec<u16>, connection_id : &u32) -> io::Result<()> {
+        let connection = match self.states.get(&connection_id) {
+            Some(s) => s,
+            None => {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "No state found"));
+            }
+        };
+        let offset = connection.sent;
+        self.send_block(sock, sid, connection_id, offset)
+    }
+
+    fn send_block(&mut self, sock : &UdpSocket, sid : &Vec<u16>, connection_id : &u32, file_offset : u64) -> io::Result<()> {
+        let connection = match self.states.get(&connection_id) {
+            Some(s) => s,
+            None => {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "No state found"));
+            }
+        };
+
+        // Load the buffer at the current offset
         let filename = &connection.file;
         let mut file = match File::open(filename) {
             Ok(f) => f,
@@ -262,12 +304,7 @@ impl TBDServer {
             },
         };
 
-        // Preparing the data for the next block
-        let (iterations,window_size) = self.compute_block_params(&connection);
-
-        debug!("Block {} Iterations {} Sending {}", connection.block_id, iterations, window_size);
-        
-        let offset = match file.seek(SeekFrom::Start(connection.sent)) {
+        match file.seek(SeekFrom::Start(file_offset)) {
             Ok(o) => o,
             Err(e) => {
                 warn!("Failed to read file at offset {}: {}", connection.sent, e);
@@ -275,6 +312,12 @@ impl TBDServer {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "Offset failed"));
             }
         };
+
+        let mut window_size = sid.len() * DATA_SIZE;
+        let remain = connection.file_size - connection.sent;
+        if window_size > remain as usize {
+            window_size = remain as usize;
+        }
 
         let mut window_buffer = vec![0; window_size];
         match file.read_exact(&mut window_buffer) {
@@ -285,29 +328,28 @@ impl TBDServer {
                 return Err(io::Error::new(io::ErrorKind::Interrupted, "Failed to read packet in"));
             }
         };
-        
-        // Sending the data packets
-        let mut remain_block = window_size;
 
-        for i in 0..iterations {
+        for seq in sid {
 
-            // Debug: Skipping packets
-            let mut engine = rand::thread_rng();
-            if engine.gen_bool(self.options.p) {
-                debug!("Skipping iteration {}", i);
-                continue;
+            
+
+            // Computing the parameter for the current packet
+            let mut size = DATA_SIZE;
+            let offset = file_offset + ((seq - 1) as u64 * DATA_SIZE as u64);
+            if connection.file_size < file_offset + (*seq as u64 * DATA_SIZE as u64) {
+                size = connection.file_size as usize - offset as usize;
             }
 
-            // Creating the current packet
-            let (packet, size) = match create_next_packet(&remain_block, &window_buffer, &(i as usize)) {
+            // Reading the data out of the current window
+            let (packet, _) = match create_next_packet(&size, &window_buffer, &(*seq as usize)) {
                 Ok(p) => p,
-                Err(e) => {
+                Err(_) => {
                     send_error(&sock, &connection.endpoint, ErrorTypes::Abort);
                     return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block"));
                 }
             };
 
-            let data = DataPacket::serialize(connection_id, &connection.block_id, &(i + 1), &packet);
+            let data = DataPacket::serialize(connection_id, &connection.block_id, &(seq + 1), &packet);
             match sock.send_to(&data, connection.endpoint) {
                 Ok(s) => {
                     debug!("Sent {} bytes to {}", s, connection.endpoint); 
@@ -320,87 +362,7 @@ impl TBDServer {
                     return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block"));
                 }
             };
-
-            remain_block -= size;
-
-            // The changes in the connections stats (flow window, sent, etc.) are only made when the ACK arrives
         }
-
-        Ok(())
-    }
-
-    fn compute_block_params(&self, connection : &ConnectionStore) -> (u16, usize) {
-        let remain = (connection.file_size - connection.sent) as usize;
-        // The buffer size for the whole next block
-        let mut window_buffer = DATA_SIZE * connection.flow_window as usize; 
-        // Only read in the min(window,remain)
-        window_buffer = cmp::min(remain, window_buffer);
-
-        // Compute the iteration counter
-        let mut iterations = connection.flow_window; // default
-
-        if window_buffer == remain {
-            // In this case it is always valid that we are sending less than a whole block
-
-            // Compute the number of iterations that are executed in this block
-            let res = remain as f64 / DATA_SIZE as f64;
-            debug!("Iterations: {}", res);
-            iterations = ceil(res, 0) as u16;
-        }
-
-        (iterations, window_buffer)
-    }
-
-    fn handle_retransmission(&mut self, sock : &UdpSocket, sid : &Vec<u16>, connection_id : &u32) -> io::Result<()> {
-        let state = match self.states.get(&connection_id) {
-            Some(s) => s,
-            None => {
-                return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block"));
-            }
-        };
-
-        for seq in sid {
-            // Compute the packet size
-            let mut p_size = DATA_SIZE;
-            let offset = state.sent + ((seq - 1) as u64 * DATA_SIZE as u64);
-            if state.file_size < state.sent + (*seq as u64 * DATA_SIZE as u64) {
-                p_size = state.file_size as usize - offset as usize;
-            }
-
-            let mut p_buffer = vec![0; p_size];
-
-            // Read in the file at the specific offset
-            let mut file = match File::open(&state.file) {
-                Ok(f) => f,
-                Err(e) => {
-                    error!("Failed to read in {}!", state.file);
-                    return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block"));
-                }
-            };
-            let offset = match file.seek(SeekFrom::Start(offset)) {
-                Ok(o) => o,
-                Err(e) => {
-                    warn!("Failed to read file at offset {}: {}", state.sent, e);
-                    send_error(sock, &state.endpoint, ErrorTypes::FileUnavailable);
-                    return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block"));
-                }
-            };
-
-            match file.read_exact(&mut p_buffer) {
-                Ok(_) => debug!("Read {} bytes from file: {}", p_size, state.file),
-                Err(_) => {
-                    error!("Failed to read in the next block of file: {}", state.file);
-                    send_error(&sock, &state.endpoint, ErrorTypes::Abort);
-                    return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block"));
-                }
-            };
-
-
-            let data = DataPacket::serialize(&connection_id, &state.block_id, seq, &p_buffer);
-            send_data(&data, &sock, &state.endpoint.to_string());
-        }
-
-        // TODO: Maybe find a way to outsmart rust and update the params in here
         Ok(())
     }
 
@@ -430,24 +392,6 @@ impl TBDServer {
             endpoint : remote,
         };
         self.states.insert(connection_id, state);
-    }
-
-    fn update_state(&mut self, connection_id : u32, block_id : u32, flow_window : u16, sent : u64) {
-        let mut state = match self.states.get_mut(&connection_id) {
-            Some(s) => s,
-            None => {
-                warn!("For the connection {} no state can be found", connection_id);
-                return;
-            }
-        };
-        state.block_id = block_id;
-        state.flow_window = flow_window;
-        state.sent = sent;
-    }   
-
-    fn sleep_n_sec(&self, sec : u64) {
-        let duration = time::Duration::from_secs(sec);
-        thread::sleep(duration);
     }
     
     fn sleep_n_ms(&self, ms : u64) {
