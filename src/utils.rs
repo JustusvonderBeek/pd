@@ -17,7 +17,7 @@ pub fn bind_to_socket(ip : &String, port : &u32, retry : u32) -> io::Result<UdpS
         return sock;
     } else {
         for i in 0..(retry-1) {
-            let sock = match UdpSocket::bind(addr) {
+            let sock = match UdpSocket::bind(&addr) {
                 Ok(s) => Ok(s),
                 Err(e) => {
                     if i + 1 == retry {
