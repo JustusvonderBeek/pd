@@ -92,7 +92,7 @@ impl TBDClient {
             debug!("Received response from {}: {}", addr, pretty_hex(&packet_buffer));
             
             // Check for errors and correct packet
-            if check_packet_type(&packet_buffer.to_vec(), PacketType::Error) {
+            if get_packet_type_client(&packet_buffer.to_vec()) == PacketType::Error {
                 let err = ErrorPacket::deserialize(&packet_buffer).unwrap();
                 warn!("Received and error from the server: ErrorCode == {:x}", err.error_code);
                 continue;
@@ -100,7 +100,7 @@ impl TBDClient {
 
             // TODO: Include handle for data packet!
 
-            if !check_packet_type(&packet_buffer.to_vec(), PacketType::Response) {
+            if get_packet_type_client(&packet_buffer.to_vec()) != PacketType::Response {
                 error!("Expected a response packet but got something different!");
                 continue;
             }
@@ -231,6 +231,7 @@ impl TBDClient {
         let window_size = (DATA_SIZE as u16 * self.flow_window) as u64;
         // Only read in the min(window,remain)
         let window_size = cmp::min(window_size, remain);
+        debug!("Computing params with Remaining {} window buffer before {} and min of both {}", remain, (DATA_SIZE*self.flow_window as usize), window_size);
 
         // Compute the iteration counter
         let mut iterations = self.flow_window; // default
@@ -296,7 +297,7 @@ impl TBDClient {
             // debug!("Received {} bytes from {}:\n{}", len, addr, pretty_hex(&packet_buffer));
             debug!("Received {} bytes from {}", len, addr);
             
-            if check_packet_type(&packet_buffer.to_vec(), PacketType::Error) {
+            if get_packet_type_client(&packet_buffer.to_vec()) == PacketType::Error {
                 let err = match ErrorPacket::deserialize(&packet_buffer[0..len]) {
                     Ok(e) => e,
                     Err(e) => {
@@ -315,7 +316,7 @@ impl TBDClient {
                 }
             }
 
-            if !check_packet_type(&packet_buffer.to_vec(), PacketType::Data) {
+            if get_packet_type_client(&packet_buffer.to_vec()) != PacketType::Data {
                 error!("Expected data packet but got something else!");
                 continue;
             }
@@ -346,6 +347,7 @@ impl TBDClient {
             // - 1 because the seq id 0 is reserved for metadata but we still want to use the space
             let start = (data.sequence_id - 1) as usize * DATA_SIZE as usize;
             // Copy only what we received (10 bytes header) - expect this to be the last packet
+            debug!("Start: {} Filesize {} Blockoffset {}", start, self.file_size, block_offset);
             let p_size = cmp::min(len - DATA_HEADER_SIZE, (self.file_size - start as u64 - block_offset) as usize);
             let end = start + p_size;
             debug!("Start: {} P_size: {} End: {} Filesize {} Blockoffset {}", start, p_size, end, self.file_size, block_offset);
@@ -435,7 +437,7 @@ impl TBDClient {
 
                 debug!("Received {} bytes from {}", len, addr);
                 
-                if check_packet_type(&packet_buffer.to_vec(), PacketType::Error) {
+                if get_packet_type_client(&packet_buffer.to_vec()) == PacketType::Error {
                     let err = match ErrorPacket::deserialize(&packet_buffer[0..len]) {
                         Ok(e) => e,
                         Err(e) => {
@@ -454,7 +456,7 @@ impl TBDClient {
                     }
                 }
     
-                if !check_packet_type(&packet_buffer.to_vec(), PacketType::Data) {
+                if get_packet_type_client(&packet_buffer.to_vec()) != PacketType::Data {
                     error!("Expected data packet but got something else!");
                     continue;
                 }
