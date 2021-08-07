@@ -328,7 +328,6 @@ pub fn get_packet_type_client(packet : &Vec<u8>) -> PacketType {
         return PacketType::None;
     }
     let fields : u8 = packet[3];
-    println!("{:x} {:x}", fields, 0b01000000);
     match fields as u8 {
         0b01000000 => return PacketType::Error,
         0b10000000 => return PacketType::Response,
@@ -436,7 +435,7 @@ mod tests {
     #[test]
     fn test_ack_packet(){
         let mut sid_list : Vec<u16> = Vec::new();
-        for i in 0..32 {
+        for i in 2..32 {
             sid_list.push(i);
         }
 
@@ -445,7 +444,7 @@ mod tests {
             fields : 0b10000000,
             block_id : 0x22334455,
             flow_window : 0x4,
-            length : 0x20,
+            length : sid_list.len() as u16,
             sid_list : sid_list
         };
         let ser = AckPacket::serialize(&base.connection_id, 
