@@ -5,8 +5,8 @@ pub struct Options {
     pub server_port: u32,
     pub server: bool,
     pub hostname: String,
-    pub p: u32,
-    pub q: u32,
+    pub p: f64,
+    pub q: f64,
     pub filename: Vec<String>,
     pub logfile: String,
 }
@@ -17,8 +17,8 @@ fn default_options() -> Options {
         server_port: 5001,
         server: false,
         hostname: String::from("127.0.0.1"),
-        p: 0,
-        q: 0,
+        p: 0.0,
+        q: 0.0,
         filename: vec![],
         logfile: String::from("tbd.log"),
     };
@@ -33,7 +33,7 @@ fn print_help() {
     println!("rft <host> [-t <port>] [-p <p>] [-q <q>] [-l <logfile>] <file> ...");
     println!("Options:");
     println!("-s: servermode: accept incoming requests from any host. Operates in client mode if “–s” is not specified.");
-    println!("-t: specify the port number to use (default: 5001)");
+    println!("-t: specify the port number Offset failed failedo use (default: 5001)");
     println!("-p, -q: specify the loss probabilities for the Markov chain model. If only one is specified, p=q is assumed; if neither is specified no loss is assumed.");
     println!("-l: Specify the path to the logfile. Default: tbd.log");
     println!("<file> the name(s) of the file(s) to fetch.");
@@ -63,12 +63,12 @@ pub fn parse_cmdline(args : Vec<String>) -> Option<Options> {
                 },
                 "-p" => {
                     let p = args.get(i + 1).expect("Expected a probability p but got nothing!");
-                    settings.p = p.parse::<u32>().unwrap();
+                    settings.p = p.parse::<f64>().unwrap();
                     i += 1;
                 },
                 "-q" => {
                     let q = args.get(i + 1).expect("Expected a probability q but got nothing!");
-                    settings.q = q.parse::<u32>().unwrap();
+                    settings.q = q.parse::<f64>().unwrap();
                     i += 1;
                 },
                 "-l" => {
