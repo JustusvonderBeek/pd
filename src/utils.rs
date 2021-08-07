@@ -2,7 +2,12 @@ use std::net::{UdpSocket, SocketAddr, IpAddr, Ipv4Addr};
 use std::io;
 use crate::packets::*;
 
-pub fn bind_to_socket(ip : &String, port : &u32, retry : u32) -> io::Result<UdpSocket, ()> {
+const PACKET_SIZE : usize = 1280;
+const DATA_HEADER : usize = 10;
+const DATA_SIZE : usize = PACKET_SIZE - DATA_HEADER;
+
+
+pub fn bind_to_socket(ip : &String, port : &u32, retry : u32) -> io::Result<UdpSocket> {
     let mut addr = String::from(ip);
     addr.push_str(":");
     addr.push_str(&port.to_string());
@@ -26,9 +31,6 @@ pub fn bind_to_socket(ip : &String, port : &u32, retry : u32) -> io::Result<UdpS
         }
         UdpSocket::bind(addr)
     }
-}
-
-fn bind_socket(addr : &String) -> io::Result<UdpSocket> {
 }
 
 pub fn send_data(buf : &Vec<u8>, sock : &UdpSocket, addr : &String) {
