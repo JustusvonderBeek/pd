@@ -256,6 +256,7 @@ impl TBDServer {
         for i in 1..packets + 1 {
             sid.push(i);
         }
+        debug!("{:?}", sid);
         sid
     }
 
@@ -331,7 +332,11 @@ impl TBDServer {
 
         for seq in sid {
 
-            
+            let mut engine = rand::thread_rng();
+            if engine.gen_bool(self.options.p) {
+                debug!("Skipping id {}", seq);
+                continue;
+            }
 
             // Computing the parameter for the current packet
             let mut size = DATA_SIZE;
@@ -341,7 +346,7 @@ impl TBDServer {
             }
 
             // Reading the data out of the current window
-            let (packet, _) = match create_next_packet(&size, &window_buffer, &(*seq as usize)) {
+            let (packet, _) = match create_next_packet(&size, &window_buffer, &((*seq - 1) as usize)) {
                 Ok(p) => p,
                 Err(_) => {
                     send_error(&sock, &connection.endpoint, ErrorTypes::Abort);
@@ -349,7 +354,7 @@ impl TBDServer {
                 }
             };
 
-            let data = DataPacket::serialize(connection_id, &connection.block_id, &(seq + 1), &packet);
+            let data = DataPacket::serialize(connection_id, &connection.block_id, &(seq), &packet);
             match sock.send_to(&data, connection.endpoint) {
                 Ok(s) => {
                     debug!("Sent {} bytes to {}", s, connection.endpoint); 
@@ -369,7 +374,6 @@ impl TBDServer {
     fn generate_conn_id(&mut self) -> u32 {
         let mut rnd = rand::thread_rng();
         loop {
-            debug!("Range end: {}", 1 << 23);
             let val = rnd.gen_range(1..1 << 23);
             if !self.states.contains_key(&val) {
                 return val;
