@@ -12,27 +12,19 @@ use std::{thread, time, cmp};
 use math::round::ceil;
 use crate::cmdline_handler::Options;
 use crate::packets::*;
-use crate::net_util::*;
+use crate::utils::*;
 
 const PACKET_SIZE : usize = 1280;
 const DATA_SIZE : usize = 1270;
 const MAX_FLOW_WINDOW : u16 = 100;
 const DEFAULT_FLOW_WINDOW : u16 = 8;
 
-enum ConnectionState {
-    Transfer,
-    Retransmission,
-}
-
-// TODO: Add the values we need for the operation
 pub struct TBDServer {
     options : Options,
-    conn_ids : HashSet<u32>,
     states : HashMap<u32, ConnectionStore>,
 }
 
 struct ConnectionStore {
-    state : ConnectionState,
     block_id : u32,
     flow_window : u16,
     file_size : u64,
@@ -45,7 +37,6 @@ impl TBDServer {
     pub fn create(opt: Options) -> TBDServer {
         TBDServer {
             options : opt,
-            conn_ids : HashSet::new(),
             states : HashMap::new(),
         }
     }
@@ -59,10 +50,10 @@ impl TBDServer {
         info!("Starting the server...");
     
         // Bind to given hostname
-        let mut hostname = String::from(&self.options.hostname);
-        hostname.push_str(":");
-        hostname.push_str(&self.options.server_port.to_string());
-        let sock = UdpSocket::bind(hostname).unwrap();
+        let sock = match bind_to_socket(&self.options.hostname, &self.options.server_port, 0) {
+            Ok(s) => s,
+            Err(e) => return Err(e),
+        };
         info!("Server is listening on {}", sock.local_addr().unwrap());
     
         loop {
