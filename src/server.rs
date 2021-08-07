@@ -59,84 +59,84 @@ impl TBDServer {
         loop {
             // 1. Reading a new packet (because this is not threaded block here)
 
-            let (packet, len, addr) = self.get_next_packet(&sock).unwrap();
+            let (packet, len, addr) = match get_next_packet(&sock, 0.0) {
+                Ok(s) => s,
+                Err(_) => {
+                    error!("Cannot read from socket! Exiting server...");
+                    std::process::exit(1);
+                }
+            };
 
             // 2. Check for a new client (according to protocol we always get a new request on resumption)
     
-            let packet_type = get_packet_type_server(&packet);
-            if PacketType::Request == packet_type {
-                // New client
-                let packet = match RequestPacket::deserialize(&packet[..len]) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        error!("Failed to deserialize request packet: {}", e);
-                        // We cannot do more than continue and wait for the client to send the next packet; basically ignore the packet
-                        continue;
-                    },
-                };
+            match get_packet_type_server(&packet) {
+                PacketType::Request => {
 
-                // Check for the file status (available, readable)
+                    let request = match RequestPacket::deserialize(&packet[0..len]) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            error!("Failed to deserialize request packet: {}", e);
+                            // Ignore the packet
+                            continue;
+                        },
+                    };
 
-                let filename = String::from(packet.file_name);
-                // debug!("Filename: {}", pretty_hex(&filename));
+                    // Check for the file status (available, readable)
+        
+                    let (file, filename) = match get_file(&request.file_name) {
+                        Ok(f) => f,
+                        Err(_) => {
+                            send_error(&sock, &addr, ErrorTypes::FileUnavailable);
+                            continue;
+                        }
+                    };
 
-                // Removing whitespace and 0 bytes from the transfer
-                let filename = filename.trim().trim_matches(char::from(0));
-                debug!("Filename: {}", pretty_hex(&filename));
-                let file = match fs::read(&filename) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        warn!("Failed to read in the file {}\n{}", filename, e);
-                        send_error(&sock, &addr, ErrorTypes::FileUnavailable);
-                        continue;
-                    },
-                };
-                let filesize = file.len() as u64;
-                debug!("File size: {}", filesize);
-
-                // Compute the checksum
-                let mut hasher = Sha256::new();
-                hasher.update(&file);
-                let hash = hasher.finalize();
-                debug!("Generated hash: {}", pretty_hex(&hash));
-                let filehash : [u8;32] = match hash.as_slice().try_into() {
-                    Ok(h) => h,
-                    Err(e) => {
-                        warn!("Failed to convert hash: {}", e);
-                        send_error(&sock, &addr, ErrorTypes::Abort);
-                        continue;
+                    let filesize = file.len() as u64;
+                    debug!("File size: {}", filesize);
+        
+                    // Compute the checksum
+                    let hash = match compute_hash(&file) {
+                        Ok(h) => h,
+                        Err(_) => {
+                            send_error(&sock, &addr, ErrorTypes::Abort);
+                            continue;
+                        }
+                    };
+        
+                    // Limit the flow window to the max of the server
+                    let mut flow_window = request.flow_window;
+                    if request.flow_window > MAX_FLOW_WINDOW {
+                        flow_window = MAX_FLOW_WINDOW;
                     }
-                };
 
-                // Create the new state
-                let connection_id = self.generate_conn_id();
-                self.create_state(connection_id, filename, filesize, packet.flow_window, packet.byte_offset, addr);
-                
-                // TODO: Case when we disagree with the client flow window?
-
-                // Construct the answer packet
-                let resp = ResponsePacket::serialize(&connection_id, &0, &filehash, &filesize);
-                match sock.send_to(&resp, addr) {
-                    Ok(size) => debug!("Sent {} bytes to {}", size, addr),
-                    Err(e) => {
-                        warn!("Failed to transfer data to {}: {}", addr, e);
-                        self.remove_state(connection_id);
-                        // We won't retry sending the response and it does not really make sense to send an error here
-                        continue;
+                    // Create the new state
+                    let connection_id = self.generate_conn_id();
+                    self.create_state(connection_id, &filename, filesize, flow_window, request.byte_offset, addr);
+                    
+                    // TODO: Signal the limit in a metadata packet
+        
+                    // Construct the answer packet
+                    let resp = ResponsePacket::serialize(&connection_id, &0, &hash, &filesize);
+                    match sock.send_to(&resp, addr) {
+                        Ok(size) => debug!("Sent {} bytes to {}", size, addr),
+                        Err(e) => {
+                            warn!("Failed to transfer data to {}: {}", addr, e);
+                            self.remove_state(connection_id);
+                            // We won't retry sending the response and it does not really make sense to send an error here
+                            continue;
+                        }
                     }
-                }
+        
+                    // Wait a short period of time
+                    self.sleep_n_ms(150);
+        
+                    // Start transfer
+                    self.send_next_block(&connection_id, &sock);
 
-                // Wait a short period of time
-                self.sleep_n_ms(500);
-
-                // Start transfer
-                self.send_next_block(&connection_id, &sock);
-
-            } else {
-                // Existing transfer
-                let packet_type = get_packet_type_server(&packet);
-                if PacketType::Error == packet_type {
-                    let err = match ErrorPacket::deserialize(&packet) {
+                },
+                // Everything else must be an existing transfer
+                PacketType::Error => {
+                    let err = match ErrorPacket::deserialize(&packet[0..len]) {
                         Ok(p) => p,
                         Err(e) => {
                             warn!("Failed to deserialize error packet: {}", e);
@@ -145,27 +145,11 @@ impl TBDServer {
                     };
                     warn!("Got an error from {}", addr);
                     warn!("Error Code: {}", err.error_code);
+                    info!("Removing connection {}", err.connection_id);
                     self.remove_state(err.connection_id);
                     continue;
-                }
-
-                let connection_id : u32 = match get_connection_id(&packet) {
-                    Ok(id) => id,
-                    Err(_) => {
-                        warn!("Failed to parse connection ID!");
-                        continue;
-                    },
-                };
-
-                match self.states.get(&connection_id) {
-                    Some(_) => {/* left empty*/},
-                    None => {
-                        warn!("Connection with ID {} does not exists", connection_id);
-                        continue;
-                    }
-                };
-
-                if PacketType::Ack == packet_type {
+                },
+                PacketType::Ack => {
                     let ack = match AckPacket::deserialize(&packet[0..len]) {
                         Ok(a) => a,
                         Err(e) => {
@@ -173,8 +157,19 @@ impl TBDServer {
                             continue;
                         }
                     };
+                    let connection_id = ack.connection_id;
+                    
+                    // Check if we still got the connection stored
+                    match self.states.get(&connection_id) {
+                        Some(_) => {/* left empty*/},
+                        None => {
+                            warn!("Connection with ID {} does not exists", connection_id);
+                            continue;
+                        }
+                    };
 
                     if ack.length > 0 {
+                        // Retransmission
                         
                         self.handle_retransmission(&sock, &ack.sid_list, &connection_id);
 
@@ -230,30 +225,17 @@ impl TBDServer {
 
                         self.send_next_block(&connection_id, &sock);
                     }
+                    
+
+                },
+                // All other packets should not be received on the server side
+                _ => {
+                    warn!("Expected a new connection or an acknowledgment but got something else!");
+                    // warn!("Expected a new connection or an acknowledgment but got something else! {}", pretty_hex(&packet));
                     continue;
-                }
-
-                error!("Expected an acknowledgment or error but got something else!\n{}", pretty_hex(&packet));
-                // TODO: Should we abort the connection when the packet does not match?
+                },
             }
-        } 
-        
-    }
-
-    fn get_next_packet(&mut self, sock : &UdpSocket) -> Result<(Vec<u8>, usize, SocketAddr), ()> {
-        let mut buf : [u8; PACKET_SIZE] = [0; PACKET_SIZE];
-        debug!("Waiting for new incoming packet");
-        let (len, addr) = match sock.recv_from(&mut buf) {
-            Ok(l) => l,
-            Err(e) => {
-                warn!("Failed to receive packet {:?}", e); 
-                return Err(());
-            }
-        };
-        debug!("Received {} bytes from {}", len, addr);
-        // debug!("{}", pretty_hex(&buf));
-
-        Ok((buf.to_vec(), len, addr))
+        }   
     }
 
     fn send_next_block(&mut self, connection_id : &u32, sock : &UdpSocket) {
@@ -423,7 +405,8 @@ impl TBDServer {
     fn generate_conn_id(&mut self) -> u32 {
         let mut rnd = rand::thread_rng();
         loop {
-            let val = rnd.gen_range(0..2^24-1);
+            debug!("Range end: {}", 1 << 23);
+            let val = rnd.gen_range(1..1 << 23);
             if !self.states.contains_key(&val) {
                 return val;
             }
