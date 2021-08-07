@@ -323,68 +323,11 @@ pub fn get_connection_id(packet : &Vec<u8>) -> Result<u32, ()> {
     return Err(());
 }
 
-pub fn get_packet_type(packet : &Vec<u8>) -> PacketType {
-    let con_id : [u8; 4] = [0, packet[0], packet[1], packet[2]];
-    let connection_id = u32::from_be_bytes(con_id);
-    if connection_id == 0 {
-        debug!("Connection ID is 0! Request or response packet!");
-        // The packet can only be an request packet
-        return PacketType::Request;
-    }
-
-    // TODO: Constant offset would only work if all packets had the same structure!
-    let flags = packet[7];
-    if flags & 0x80 == 0x80 {
-        return PacketType::Ack;
-    } else if flags & 0x40 == 0x40 {
-        return PacketType::Error;
-    } else if flags % 0x20 == 0x20 {
-        return PacketType::Metadata;
-    } else if flags % 0xE0 == 0 {
-        return PacketType::Data;
-    } else if flags & 0xE0 == 0 {
-
-    }
-    // The rest can only be determined in the current state
-
-    PacketType::None
-}
-
-pub fn check_packet_type(packet : &Vec<u8>, p_type : PacketType) -> bool {
-    let con_id : [u8; 4] = [0, packet[0], packet[1], packet[2]];
-    let connection_id = u32::from_be_bytes(con_id);
-    match p_type {
-        PacketType::Ack => {
-            return packet[3] & 0x80 == 0x80;
-        },
-        PacketType::Data => {
-            return packet[3] & 0xE0 == 0x00;
-        },
-        PacketType::Error => {
-            return packet[3] & 0x40 == 0x40;
-        },
-        PacketType::Metadata => {
-            return packet[3] & 0x20 == 0x20;
-        }
-        PacketType::Request => {
-            return connection_id == 0;
-        },
-        PacketType::Response => {
-            return connection_id != 0 && packet[3] & 0b10000000 == 0b10000000;
-        }
-        _ => {
-            warn!("The packet type cannot be found!");
-            return false;
-        }
-    }
-}
-
 pub fn get_packet_type_client(packet : &Vec<u8>) -> PacketType {
     if packet.len() < 10{
         return PacketType::None;
     }
     let fields : u8 = packet[3];
-    println!("{:x} {:x}", fields, 0b01000000);
     match fields as u8 {
         0b01000000 => return PacketType::Error,
         0b10000000 => return PacketType::Response,
@@ -492,7 +435,7 @@ mod tests {
     #[test]
     fn test_ack_packet(){
         let mut sid_list : Vec<u16> = Vec::new();
-        for i in 0..32 {
+        for i in 2..32 {
             sid_list.push(i);
         }
 
@@ -501,7 +444,7 @@ mod tests {
             fields : 0b10000000,
             block_id : 0x22334455,
             flow_window : 0x4,
-            length : 0x20,
+            length : sid_list.len() as u16,
             sid_list : sid_list
         };
         let ser = AckPacket::serialize(&base.connection_id, 
