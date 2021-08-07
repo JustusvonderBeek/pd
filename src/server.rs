@@ -63,7 +63,8 @@ impl TBDServer {
 
             // 2. Check for a new client (according to protocol we always get a new request on resumption)
     
-            if check_packet_type(&packet, PacketType::Request) {
+            let packet_type = get_packet_type_server(&packet);
+            if PacketType::Request == packet_type {
                 // New client
                 let packet = match RequestPacket::deserialize(&packet[..len]) {
                     Ok(p) => p,
@@ -133,7 +134,8 @@ impl TBDServer {
 
             } else {
                 // Existing transfer
-                if check_packet_type(&packet, PacketType::Error) {
+                let packet_type = get_packet_type_server(&packet);
+                if PacketType::Error == packet_type {
                     let err = match ErrorPacket::deserialize(&packet) {
                         Ok(p) => p,
                         Err(e) => {
@@ -155,7 +157,7 @@ impl TBDServer {
                     },
                 };
 
-                match self.conn_ids.get(&connection_id) {
+                match self.states.get(&connection_id) {
                     Some(_) => {/* left empty*/},
                     None => {
                         warn!("Connection with ID {} does not exists", connection_id);
@@ -163,7 +165,7 @@ impl TBDServer {
                     }
                 };
 
-                if check_packet_type(&packet, PacketType::Ack) {
+                if PacketType::Ack == packet_type {
                     let ack = match AckPacket::deserialize(&packet[0..len]) {
                         Ok(a) => a,
                         Err(e) => {
@@ -422,22 +424,19 @@ impl TBDServer {
         let mut rnd = rand::thread_rng();
         loop {
             let val = rnd.gen_range(0..2^24-1);
-            if !self.conn_ids.contains(&val) {
+            if !self.states.contains_key(&val) {
                 return val;
             }
         }
     }
 
     fn remove_state(&mut self, connection_id : u32) {
-        self.conn_ids.remove(&connection_id);
         self.states.remove(&connection_id);
     }
 
     fn create_state(&mut self, connection_id : u32, file_name : &str, size : u64, flow : u16, offset : u64, remote : SocketAddr) {
-        self.conn_ids.insert(connection_id);
         let flow = cmp::min(flow, DEFAULT_FLOW_WINDOW);
         let state = ConnectionStore {
-            state : ConnectionState::Transfer,
             block_id : 0,
             flow_window : flow,
             file : String::from(file_name),
