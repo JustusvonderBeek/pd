@@ -12,7 +12,7 @@ use sha2::{Sha256, Digest};
 use std::convert::TryInto;
 use crate::cmdline_handler::Options;
 use crate::packets::*;
-use crate::net_util::*;
+use crate::utils::*;
 
 const PACKET_SIZE : usize = 1280;
 const DATA_SIZE : usize = 1270;
