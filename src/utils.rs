@@ -4,10 +4,9 @@ use pretty_hex::*;
 use sha2::{Sha256, Digest};
 use crate::packets::*;
 
-const PACKET_SIZE : usize = 1280;
-const DATA_HEADER : usize = 10;
-const DATA_SIZE : usize = PACKET_SIZE - DATA_HEADER;
-
+pub const PACKET_SIZE : usize = 1280;
+pub const DATA_HEADER : usize = 10;
+pub const DATA_SIZE : usize = PACKET_SIZE - DATA_HEADER;
 
 pub fn bind_to_socket(ip : &String, port : &u32, retry : u32) -> io::Result<UdpSocket> {
     let mut addr = String::from(ip);
@@ -104,6 +103,30 @@ pub fn compute_hash(buf : &Vec<u8>) -> Result<[u8; 32],()> {
         }
     };
     Ok(filehash)
+}
+
+pub fn create_next_packet(remain : &usize, window_buffer : &Vec<u8>, seq : &usize) -> io::Result<(Vec<u8>, usize)> {
+    // Including space for header
+    let mut packet = vec![0; DATA_SIZE];
+
+    // Computing the slice we need to read out of the window buffer
+    let start = seq * DATA_SIZE;
+    let mut end = start + DATA_SIZE;
+    if *remain < DATA_SIZE {
+        end = start + remain;
+        debug!("Cut the last packet to {} bytes", remain);
+    }
+    let size = end - start;
+    if size > DATA_SIZE {
+        error!("During the computation of the packet size something went wrong! Packet size {} is larger than the space available {}", size, DATA_SIZE);
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid size"));
+    }
+    if end > window_buffer.len() {
+        error!("The copying would create an out of bounds error! Computed {} but the buffer is only {} bytes long", end, window_buffer.len());
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid size"));
+    }
+    packet[0..size].copy_from_slice(&window_buffer[start..end]);
+    Ok((packet.to_vec(), size))
 }
 
 pub fn send_data(buf : &Vec<u8>, sock : &UdpSocket, addr : &String) {
