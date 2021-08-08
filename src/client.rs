@@ -145,9 +145,10 @@ impl TBDClient {
                 Err(_) => continue,
             };
 
-            if compare_hashes(&self.file_hash.to_vec(), &hash.to_vec()) {
+            if !compare_hashes(&self.file_hash.to_vec(), &hash.to_vec()) {
                 error!("The file is corrupted. Hashes do not match!");
                 // TODO: Retransfer the file?
+                
             } else {
                 info!("File hash is correct");
             }
