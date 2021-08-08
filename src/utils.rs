@@ -39,7 +39,7 @@ pub fn bind_to_socket(ip : &String, port : &u32, retry : u32) -> io::Result<UdpS
     }
 }
 
-pub fn get_next_packet(sock : &UdpSocket, timeout_ms : f64) -> Result<(Vec<u8>, usize, SocketAddr), ()> {
+pub fn get_next_packet(sock : &UdpSocket, timeout_ms : f64) -> Result<(Vec<u8>, usize, SocketAddr), Option<()>> {
     let mut buf : [u8; PACKET_SIZE] = [0; PACKET_SIZE];
     debug!("Waiting for new incoming packet on {}", sock.local_addr().unwrap());
     if timeout_ms <= 0.0 {
@@ -67,10 +67,15 @@ pub fn get_next_packet(sock : &UdpSocket, timeout_ms : f64) -> Result<(Vec<u8>, 
     }
     let (len, addr) = match sock.recv_from(&mut buf) {
         Ok(l) => l,
+        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+            return Err(None);
+        },
+        Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
+            return Err(None);
+        },
         Err(e) => {
-            error!("Failed to receive on socket {}", sock.local_addr().unwrap());
-            // std::process::exit(1);
-            return Err(());
+            warn!("Failed to receive data: {}", e);
+            return Err(Some(()));
         }
     };
     debug!("Received {} bytes from {}", len, addr);
