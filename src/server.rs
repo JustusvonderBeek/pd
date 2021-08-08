@@ -31,6 +31,7 @@ struct ConnectionStore {
     file : String,
     sent : u64,
     endpoint : SocketAddr,
+    retransmission : bool,
 }
 
 impl TBDServer {
@@ -173,63 +174,63 @@ impl TBDServer {
                     if ack.length > 0 {
                         // Retransmission
                         
-                        self.handle_retransmission(&sock, &ack.sid_list, &connection_id);
+                        // TODO: Handling
+                        match self.handle_retransmission(&sock, &ack.sid_list, &connection_id) {
+                            Ok(_) => {},
+                            Err(_) => {
 
-                        // We have to do it this way because Rust is shiiit
-                        let mut state = match self.states.get_mut(&ack.connection_id) {
-                            Some(s) => s,
-                            None => {
-                                error!("Connection with ID {} does not exists", ack.connection_id);
-                                continue;
-                            }
+                            },
                         };
 
-                        // TODO: Update the amount of sent bytes
-                        
+                        // WE DO NOT UPDATE THE CONNECTION PARAMETER IN HERE BECAUSE OTHERWISE WE COMPUTE FALSE BLOCK SIZES!
 
-                        // Update connection parameter
-                        state.flow_window = ceil(state.flow_window as f64 / 2.0, 0) as u16;
-                        // TODO: Updating flow window and using the smaller window to compute the sent size later
-                        
-                        if state.sent >= state.file_size {
-                            info!("File {} successfully transferred! Removing state...", state.file);
-                            self.remove_state(connection_id);
-                            continue;
-                        }
+                        // We can only remove the state when we get a positive acknowledgment so were are done here
                         
                     } else {
 
-                        let mut state = match self.states.get_mut(&ack.connection_id) {
+                        let mut connection = match self.states.get_mut(&ack.connection_id) {
                             Some(s) => s,
                             None => {
                                 error!("Connection with ID {} does not exists", ack.connection_id);
+                                // TODO: Sending an abort error?
                                 continue;
                             }
                         };
 
                         // Advance the parameter because of successfull transmission
-                        debug!("Successfully transmitted block {} of connection {}", state.block_id, connection_id);
+                        debug!("Successfully transmitted block {} of connection {}", connection.block_id, connection_id);
                         
                         // Check if the file transfer is complete and the state can be deleted
-                        let mut sent = (DATA_SIZE * state.flow_window as usize) as u64; // Over approximation (but if it is too much this should still be fine)
-                        if state.sent + sent > state.file_size {
-                            info!("File {} successfully transferred! Removing state...", state.file);
+                        let mut sent = (DATA_SIZE * connection.flow_window as usize) as u64; // Over approximation (but if it is too much this should still be fine)
+                        
+                        if connection.sent + sent > connection.file_size {
+                            info!("File {} successfully transferred! Removing state...", connection.file);
                             self.remove_state(connection_id);
                             continue;
                         }
-                        sent = state.sent + sent;
-
-                        // Cap the maximal flow window
-                        let mut flow_window = ack.flow_window;
-                        if ack.flow_window > MAX_FLOW_WINDOW {
-                            flow_window = MAX_FLOW_WINDOW;
+                        
+                        if connection.retransmission {
+                            // Cut the window in half regardless of the client
+                            connection.flow_window = ceil(connection.flow_window as f64 / 2.0, 0) as u16;
+                            connection.retransmission = false;
+                        } else {
+                            // Cap the maximal flow window
+                            let mut flow_window = ack.flow_window;
+                            if ack.flow_window > MAX_FLOW_WINDOW {
+                                flow_window = MAX_FLOW_WINDOW;
+                            }
+                            connection.flow_window = flow_window;
                         }
+                        
+                        sent = connection.sent + sent;
+                        connection.sent = sent;
+                        connection.block_id += 1;
 
-                        state.sent = sent;
-                        state.block_id += 1;
-                        state.flow_window = flow_window;
-
-                        self.send_next_block(&connection_id, &sock);
+                        // TODO: Handle the error
+                        match self.send_next_block(&connection_id, &sock) {
+                            Ok(_) => {},
+                            Err(_) => {},
+                        }
                     }
                     
 
@@ -285,12 +286,13 @@ impl TBDServer {
         let mut _sent = 0;
         let mut _flow_window = 0;
         {
-            let connection = match self.states.get(&connection_id) {
+            let connection = match self.states.get_mut(&connection_id) {
                 Some(s) => s,
                 None => {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "No state found"));
                 }
             };
+            connection.retransmission = true;
             _sent = connection.sent;
             _flow_window = connection.flow_window;
         }
@@ -348,7 +350,7 @@ impl TBDServer {
 
             let mut engine = rand::thread_rng();
             if engine.gen_bool(self.options.p) {
-                debug!("Skipping id {}", seq);
+                debug!("Skipping seq id {}", seq);
                 continue;
             }
 
@@ -408,6 +410,7 @@ impl TBDServer {
             file_size : size,
             sent : offset,
             endpoint : remote,
+            retransmission : false,
         };
         self.states.insert(connection_id, state);
     }
