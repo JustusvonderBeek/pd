@@ -4,3 +4,5 @@ pd::utils: Received 14 bytes from 127.0.0.1:6001
 11:32:21 [DEBUG] (1) pd::packets: Received a packet with differing size and length parameter
 11:32:21 [ERROR] Failed to deserialize ack packet: Parsing ACK invalid params
 --
+
+Server side closes the connection before receiving an ACK for the final block? -> No retransmission phase is entered there
