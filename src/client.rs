@@ -23,6 +23,7 @@ pub struct TBDClient {
     offset : u64,
     connection_id : u32,
     flow_window : u16,
+    congestion_window : u16,
     block_id : u32,
     file_hash : [u8; 32],
     file_size : u64,
@@ -39,6 +40,7 @@ impl TBDClient {
             offset : 0,
             connection_id : 0,
             flow_window : START_FLOW_WINDOW,
+            congestion_window : START_FLOW_WINDOW,
             block_id : 0,
             file_hash : [0; 32],
             file_size : 0,
@@ -167,7 +169,7 @@ impl TBDClient {
     fn create_new_sid(&mut self, flow_window : u16) -> LinkedList<u16> {
         let mut list = LinkedList::new();
         // Because the ID 0 is blocked for the metadata packet
-        for i in 1..flow_window + 1 {
+        for i in 0..flow_window + 1 {
             list.push_back(i);
         }
         list
@@ -351,7 +353,14 @@ impl TBDClient {
                             // Ignore
                             continue;
                         }
-                        warn!("New block_size for next round is expected to be {}", metadata.new_block_size);}
+                        warn!("New block_size for next round is expected to be {}", metadata.new_block_size);
+
+                        // Updating the congestion window
+                        self.congestion_window = metadata.new_block_size;
+                        sid = self.remove_from_list(&sid, metadata.sequence_id);
+
+                        break 'inner;
+                    }
                     _ => {
                         error!("Expected data packet but got something else!");
                         continue;
@@ -381,9 +390,9 @@ impl TBDClient {
             self.offset += self.flow_window as u64 * DATA_SIZE as u64;
             if self.retransmission {
                 // We did a retransmission
-                self.flow_window = ceil(self.flow_window as f64 / 2.0, 0) as u16;
+                self.flow_window = ceil(self.congestion_window as f64 / 4.0, 0) as u16;
             } else {
-                self.flow_window += 1;
+                self.flow_window = self.congestion_window;
             }
             self.block_id += 1;
             
