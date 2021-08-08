@@ -217,7 +217,9 @@ impl TBDServer {
                                 connection.slow_start_next_block = ceil(connection.slow_start_next_block as f64 / 2.0, 0) as u16;
                                 connection.flow_window = connection.slow_start_next_block;
                             }else{
-                                connection.flow_window = ceil(connection.flow_window as f64 / 2.0, 0) as u16;
+                                // TODO: Original assumption was + 1 from the client perspective
+                                connection.slow_start_next_block = ceil((connection.slow_start_next_block + 1) as f64 / 2.0, 0) as u16;
+                                connection.flow_window = connection.slow_start_next_block;
                             }
                             connection.retransmission = false;
                         } else {
@@ -228,7 +230,8 @@ impl TBDServer {
                                 flow_window = connection.slow_start_next_block;
                                 debug!("We are in slow start increasing from {} to {}", connection.flow_window, connection.slow_start_next_block);
                             }else {
-                                flow_window = connection.flow_window + 1;
+                                connection.slow_start_next_block += 1;
+                                flow_window = connection.slow_start_next_block;
                             }
                             // If we exceed the servers limit we stop increasing
                             if flow_window > MAX_FLOW_WINDOW {
