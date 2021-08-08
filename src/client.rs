@@ -75,7 +75,7 @@ impl TBDClient {
         let filenames = self.options.filename.clone();
         
         for filename in filenames {
-            // TODO: Add the handling for the continued file request
+            // TODO: Add the handling for the continued file request / resumption
 
             // The initial flow window is set by the application implementation
             let request = RequestPacket::serialize(&0, &self.flow_window, &filename);
