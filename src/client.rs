@@ -31,6 +31,7 @@ pub struct TBDClient {
     server : String,
     filename : String,
     retransmission : bool,
+    slow_start : bool,
 }
 
 impl TBDClient {
@@ -48,6 +49,7 @@ impl TBDClient {
             server : String::new(),
             filename : String::new(),
             retransmission : false,
+            slow_start : true,
         }
     }
 
@@ -409,7 +411,13 @@ impl TBDClient {
             self.offset += self.flow_window as u64 * DATA_SIZE as u64;
             if self.retransmission {
                 // We did a retransmission
-                self.flow_window = ceil(self.congestion_window as f64 / 4.0, 0) as u16;
+                if self.slow_start {
+                    self.flow_window = ceil(self.congestion_window as f64 / 4.0, 0) as u16;
+                    // Slow start has ended
+                    self.slow_start = false;
+                }else{
+                    self.flow_window = ceil(self.congestion_window as f64 / 2.0, 0) as u16;
+                }
             } else {
                 self.flow_window = self.congestion_window;
             }

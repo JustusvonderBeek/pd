@@ -30,6 +30,7 @@ struct ConnectionStore {
     sent : u64,
     endpoint : SocketAddr,
     retransmission : bool,
+    slow_start_next_block : u16,
     ssthresh : u16,
     slow_start : bool,
 }
@@ -213,11 +214,35 @@ impl TBDServer {
                         
                         if connection.retransmission {
                             // Cut the window in half regardless of the client
-                            connection.flow_window = ceil(connection.flow_window as f64 / 2.0, 0) as u16;
+                            if connection.slow_start {
+                                connection.slow_start = false;
+                                connection.slow_start_next_block = ceil(connection.slow_start_next_block as f64 / 2.0, 0) as u16;
+                                connection.flow_window = connection.slow_start_next_block;
+                            }else{
+                                // TODO: Original assumption was + 1 from the client perspective
+                                connection.slow_start_next_block = ceil((connection.slow_start_next_block + 1) as f64 / 2.0, 0) as u16;
+                                connection.flow_window = connection.slow_start_next_block;
+                            }
                             connection.retransmission = false;
                         } else {
                             // Cap the maximal flow window
-                            connection.flow_window = cmp::min(ack.flow_window, MAX_FLOW_WINDOW);
+                            let mut flow_window;
+                            if connection.slow_start {
+                                connection.slow_start_next_block = connection.slow_start_next_block * 2;
+                                flow_window = connection.slow_start_next_block;
+                                debug!("We are in slow start increasing from {} to {}", connection.flow_window, connection.slow_start_next_block);
+                            }else {
+                                connection.slow_start_next_block += 1;
+                                flow_window = connection.slow_start_next_block;
+                            }
+                            // If we exceed the servers limit we stop increasing
+                            if flow_window > MAX_FLOW_WINDOW {
+                                debug!("Reached flow window limit");
+                                flow_window = MAX_FLOW_WINDOW;
+                                connection.slow_start_next_block = MAX_FLOW_WINDOW;
+                            }
+                            debug!("Setting flow window to {}", flow_window);
+                            connection.flow_window = flow_window;
                         }
                         
                         sent = connection.sent + sent;
@@ -270,7 +295,7 @@ impl TBDServer {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "No state found"));
                 },
             };
-    
+            debug!("Connection flow window is {}", connection.flow_window);
             let sid_list = self.create_new_sid(connection.file_size, connection.sent, connection.flow_window);
             _sid = sid_list;
             _sent = connection.sent;
@@ -280,10 +305,10 @@ impl TBDServer {
             let mut new_block_size;
             if connection.slow_start {
                 // We are still in the slow_start phase and our window will double in size
-                new_block_size = _flow_window * 2;
+                new_block_size = cmp::min(_flow_window * 2, MAX_FLOW_WINDOW);
             }else{
                 // Otherwise we follow an AIMD strategy so the next block in case of no losses is incremented by 1
-                new_block_size = _flow_window + 1;
+                new_block_size = cmp::min(_flow_window + 1, MAX_FLOW_WINDOW);
             }
     
             let m_d = MetadataPacket::serialize(connection_id, &connection.block_id, &new_block_size);
@@ -448,6 +473,7 @@ impl TBDServer {
             sent : offset,
             endpoint : remote,
             retransmission : false,
+            slow_start_next_block : 8,  // Default we start with 8 Blocks according to spec
             ssthresh : u16::MAX,
             slow_start : true,
 
