@@ -39,10 +39,10 @@ pub fn bind_to_socket(ip : &String, port : &u32, retry : u32) -> io::Result<UdpS
     }
 }
 
-pub fn get_next_packet(sock : &UdpSocket, timeout : f64) -> Result<(Vec<u8>, usize, SocketAddr), ()> {
+pub fn get_next_packet(sock : &UdpSocket, timeout_ms : f64) -> Result<(Vec<u8>, usize, SocketAddr), ()> {
     let mut buf : [u8; PACKET_SIZE] = [0; PACKET_SIZE];
     debug!("Waiting for new incoming packet on {}", sock.local_addr().unwrap());
-    if timeout <= 0.0 {
+    if timeout_ms <= 0.0 {
         let mut timeout_set = true;
         match sock.read_timeout() {
             Ok(_) => timeout_set = false,
@@ -57,7 +57,7 @@ pub fn get_next_packet(sock : &UdpSocket, timeout : f64) -> Result<(Vec<u8>, usi
             }
         }
     } else {
-        let dur = Duration::from_millis((timeout * 1000.0) as u64);
+        let dur = Duration::from_millis((timeout_ms) as u64);
         match sock.set_read_timeout(Some(dur)) {
             Ok(_) => {},
             Err(e) => {
