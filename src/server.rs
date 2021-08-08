@@ -32,6 +32,8 @@ struct ConnectionStore {
     sent : u64,
     endpoint : SocketAddr,
     retransmission : bool,
+    ssthresh : u16,
+    slow_start : bool,
 }
 
 impl TBDServer {
@@ -300,6 +302,7 @@ impl TBDServer {
         self.send_block(sock, sid, connection_id, _sent, _flow_window)
     }
 
+    /// Handles the transmission of an entire block including sending the metadata information
     fn send_block(&mut self, sock : &UdpSocket, sid : &Vec<u16>, connection_id : &u32, file_offset : u64, flow_window : u16) -> io::Result<()> {
         let connection = match self.states.get(&connection_id) {
             Some(s) => s,
@@ -343,6 +346,30 @@ impl TBDServer {
                 error!("Failed to read in the next block of file: {}", filename);
                 send_error(&sock, connection_id, &connection.endpoint, ErrorTypes::Abort);
                 return Err(io::Error::new(io::ErrorKind::Interrupted, "Failed to read packet in"));
+            }
+        };
+
+        // After we can successfully satisfy the information request we also need to send a Metadata packet including the size of the next block
+        let mut new_block_size;
+        if connection.slow_start {
+            // We are still in the slow_start phase and our window will double in size
+            new_block_size = flow_window * 2;
+        }else{
+            // Otherwise we follow an AIMD strategy so the next block in case of no losses is incremented by 1
+            new_block_size = flow_window + 1;
+        }
+
+        let m_d = MetadataPacket::serialize(connection_id, &connection.block_id, &new_block_size);
+        match sock.send_to(&m_d, connection.endpoint) {
+            Ok(s) => {
+                debug!("Sent {} bytes of metadata package to {}", s, connection.endpoint); 
+                s
+            },
+            Err(e) => {
+                error!("Failed to send metadata to {}: {}", connection.endpoint, e);
+                send_error(&sock, connection_id, &connection.endpoint, ErrorTypes::Abort);
+                self.remove_state(connection_id.to_owned());
+                return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block"));
             }
         };
 
@@ -411,6 +438,9 @@ impl TBDServer {
             sent : offset,
             endpoint : remote,
             retransmission : false,
+            ssthresh : u16::MAX,
+            slow_start : true,
+
         };
         self.states.insert(connection_id, state);
     }

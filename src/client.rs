@@ -330,6 +330,28 @@ impl TBDClient {
                         i -= 1;
                         break 'inner;
                     }
+                    PacketType::Metadata => {
+                        let metadata = match MetadataPacket::deserialize(&packet[0..len]) {
+                            Ok(d) => d,
+                            Err(e) => {
+                                warn!("Failed to deserialize the data packet: {}", e);
+                                // This should be fixable in the retransmission (missing seq id)
+                                break 'inner;
+                            }
+                        };
+    
+                        if metadata.connection_id != self.connection_id {
+                            error!("Connection IDs do not match!");
+                            // Ignore
+                            continue;
+                        }
+    
+                        if metadata.block_id != self.block_id {
+                            warn!("Block IDs do not match. Expected {} got {}", self.block_id, metadata.block_id);
+                            // Ignore
+                            continue;
+                        }
+                        warn!("New block_size for next round is expected to be {}", metadata.new_block_size);}
                     _ => {
                         error!("Expected data packet but got something else!");
                         continue;

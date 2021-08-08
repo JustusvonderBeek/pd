@@ -201,7 +201,8 @@ impl AckPacket {
         let mut sid_list : Vec<u16> = Vec::new();
         let ack_length : u16 = BigEndian::read_u16(&buffer[10..12]);
         if (12 + (2*ack_length as usize)) > buffer.len(){
-            debug!("Received a packet with differing size and length parameter");
+            debug!("Received a packet with differing size and length parameter buffer length without header {} was listed as length {}", buffer.len(), ack_length);
+            println!("{:?}", buffer);
             return Err("Parsing ACK invalid params");
         }
         for n in (12..12 + (ack_length as usize) * 2).step_by(2){
