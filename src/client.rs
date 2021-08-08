@@ -93,7 +93,6 @@ impl TBDClient {
                 Err(_) => return Err(io::Error::new(io::ErrorKind::ConnectionReset, "Did not receive an answer")),
             };
             // debug!("Received response from {}: {}", addr, pretty_hex(&packet_buffer));
-            debug!("Received {} bytes response from {}", len, addr);
             
             // Check for errors and correct packet
             let packet_type = get_packet_type_client(&packet);
@@ -261,7 +260,6 @@ impl TBDClient {
                         return Err(sid);
                     },
                 };
-                debug!("Received {} bytes from {}", len, addr);
 
                 let packet_type = get_packet_type_client(&packet[0..len].to_vec());
                 match packet_type {
@@ -395,8 +393,8 @@ impl TBDClient {
             return 0;
         }
 
-        if start > data.data.len() || end > data.data.len() {
-            error!("Cannot read from {} to {} in data with length {}", start, end,data.data.len());
+        if p_size > data.data.len() {
+            error!("Cannot read from {} in data with length {}", p_size, data.data.len());
             return 0;
         }
 
