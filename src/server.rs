@@ -163,8 +163,10 @@ impl TBDServer {
                     let connection_id = ack.connection_id;
                     
                     // Check if we still got the connection stored
-                    match self.states.get(&connection_id) {
-                        Some(_) => {/* left empty*/},
+                    match self.states.get_mut(&connection_id) {
+                        Some(s) => { 
+                            s.endpoint = addr;
+                        },
                         None => {
                             warn!("Connection with ID {} does not exists", connection_id);
                             continue;
