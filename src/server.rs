@@ -33,6 +33,7 @@ struct ConnectionStore {
     slow_start_next_block : u16,
     ssthresh : u16,
     slow_start : bool,
+    client_max_flow : u16,
 }
 
 impl TBDServer {
@@ -211,6 +212,7 @@ impl TBDServer {
                             self.remove_state(connection_id);
                             continue;
                         }
+                        connection.client_max_flow = ack.flow_window;
                         
                         if connection.retransmission {
                             // Cut the window in half regardless of the client
@@ -222,6 +224,11 @@ impl TBDServer {
                                 // TODO: Original assumption was + 1 from the client perspective
                                 connection.slow_start_next_block = ceil((connection.slow_start_next_block + 1) as f64 / 2.0, 0) as u16;
                                 connection.flow_window = connection.slow_start_next_block;
+                            }
+                            if connection.flow_window > connection.client_max_flow {
+                                // Here server never will be too small
+                                connection.flow_window = connection.client_max_flow;
+                                connection.slow_start_next_block = connection.client_max_flow;
                             }
                             connection.retransmission = false;
                         } else {
@@ -236,10 +243,11 @@ impl TBDServer {
                                 flow_window = connection.slow_start_next_block;
                             }
                             // If we exceed the servers limit we stop increasing
-                            if flow_window > MAX_FLOW_WINDOW {
+                            if flow_window > MAX_FLOW_WINDOW || flow_window > connection.client_max_flow {
                                 debug!("Reached flow window limit");
-                                flow_window = MAX_FLOW_WINDOW;
-                                connection.slow_start_next_block = MAX_FLOW_WINDOW;
+                                let new_flow = cmp::min(MAX_FLOW_WINDOW, connection.client_max_flow);
+                                flow_window = new_flow;
+                                connection.slow_start_next_block = new_flow;
                             }
                             debug!("Setting flow window to {}", flow_window);
                             connection.flow_window = flow_window;
@@ -302,7 +310,7 @@ impl TBDServer {
             _flow_window = connection.flow_window;
 
             // After we can successfully satisfy the information request we also need to send a Metadata packet including the size of the next block
-            let mut new_block_size;
+            let new_block_size;
             if connection.slow_start {
                 // We are still in the slow_start phase and our window will double in size
                 new_block_size = cmp::min(_flow_window * 2, MAX_FLOW_WINDOW);
@@ -476,7 +484,7 @@ impl TBDServer {
             slow_start_next_block : 8,  // Default we start with 8 Blocks according to spec
             ssthresh : u16::MAX,
             slow_start : true,
-
+            client_max_flow : u16::MAX,
         };
         self.states.insert(connection_id, state);
     }
