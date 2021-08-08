@@ -136,7 +136,9 @@ impl TBDClient {
                 }
             }
 
-            let (file, _) = match get_file(&String::from(&filename)) {
+            let mut new_file = String::from(filename);
+            new_file.push_str(".new");
+            let (file, _) = match get_file(&String::from(&new_file)) {
                 Ok(f) => f,
                 Err(_) => continue,
             };
@@ -207,8 +209,9 @@ impl TBDClient {
         'outer: loop {
             let (iterations, window_size) = self.compute_block_params();
             let sid = self.create_new_sid(iterations);
+            let mut window_buffer = vec![0; window_size];
 
-            let mut list = match self.receive(sock, window_size, sid) {
+            let mut list = match self.receive(sock, &mut window_buffer, sid) {
                 Ok(_) => {
                     if self.received >= self.file_size {
                         info!("Received all packets!");
@@ -220,7 +223,7 @@ impl TBDClient {
                 Err(list) => list,
             };
             'inner: for i in 0..MAX_RETRANSMISSION {
-                let new_list = match self.receive(sock, window_size, list) {
+                let new_list = match self.receive(sock, &mut window_buffer, list) {
                     Ok(_) => {
                         if self.received >= self.file_size {
                             info!("Received all packets!");
@@ -242,11 +245,8 @@ impl TBDClient {
         }
     }
 
-    fn receive(&mut self, sock : &UdpSocket, window_size : usize, list : LinkedList<u16>) -> Result<(), LinkedList<u16>> {
+    fn receive(&mut self, sock : &UdpSocket, window_buffer : &mut Vec<u8>, list : LinkedList<u16>) -> Result<(), LinkedList<u16>> {
         info!("Starting file transmission...");
-
-        // Prepare the buffer for the next whole window
-        let mut window_buffer = vec![0; window_size];
 
         // Prepare working vars
         let mut sid = list.clone();
@@ -318,7 +318,7 @@ impl TBDClient {
                             continue;
                         }
     
-                        let size = self.fill_window_buffer(&mut window_buffer, &data);
+                        let size = self.fill_window_buffer(window_buffer, &data);
                         sid = self.remove_from_list(&sid, data.sequence_id);
     
                         // Advancing the received only after the complete transmission
