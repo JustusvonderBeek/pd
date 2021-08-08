@@ -236,7 +236,7 @@ impl TBDClient {
                         break 'inner;
                     },
                     Err(list) => {
-                        debug!("Failed retransmission {}", i);
+                        debug!("Failed retransmission {}", i + 1);
                         list
                     },
                 };
