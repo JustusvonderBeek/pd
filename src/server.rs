@@ -215,11 +215,7 @@ impl TBDServer {
                             connection.retransmission = false;
                         } else {
                             // Cap the maximal flow window
-                            let mut flow_window = ack.flow_window;
-                            if ack.flow_window > MAX_FLOW_WINDOW {
-                                flow_window = MAX_FLOW_WINDOW;
-                            }
-                            connection.flow_window = flow_window;
+                            connection.flow_window = cmp::min(ack.flow_window, MAX_FLOW_WINDOW);
                         }
                         
                         sent = connection.sent + sent;
@@ -372,13 +368,26 @@ impl TBDServer {
             }
         };
 
+        let mut loss = false;
+        let mut loss_prob;
+        let mut engine = rand::thread_rng();
+
         for seq in sid {
 
-            let mut engine = rand::thread_rng();
-            if engine.gen_bool(self.options.p) {
+            // Probability for next packet loss
+            if loss {
+                loss_prob = self.options.q;
+            } else {
+                loss_prob = self.options.p;
+            }
+
+            if engine.gen_bool(loss_prob) {
                 debug!("Skipping seq id {}", seq);
+                loss = true;
                 continue;
             }
+
+            loss = false;
 
             // Computing the parameter for the current packet
             let mut size = DATA_SIZE;
