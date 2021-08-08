@@ -7,6 +7,7 @@ use std::{
     collections::LinkedList,
     net::UdpSocket,
 };
+use rand::Rng;
 use pretty_hex::*;
 use math::round::ceil;
 use crate::cmdline_handler::Options;
@@ -261,6 +262,10 @@ impl TBDClient {
         debug!("Making {} iterations in the current block {}", i, self.block_id);
         debug!("Expecting: {:?}", list);
         
+        let mut loss = false;
+        let mut loss_prob;
+        let mut engine = rand::thread_rng();
+
         // Loop until we received i data packets
         'outer: for seq in &list {
 
@@ -324,6 +329,20 @@ impl TBDClient {
                             continue;
                         }
     
+                        // Loss probability
+                        if loss {
+                            loss_prob = self.options.q;
+                        } else {
+                            loss_prob = self.options.p;
+                        }
+
+                        if engine.gen_bool(loss_prob) {
+                            info!("Skipping packet {}", data.sequence_id);
+                            loss = true;
+                            continue;
+                        }
+                        loss = false;
+
                         let size = self.fill_window_buffer(window_buffer, &data);
                         sid = self.remove_from_list(&sid, data.sequence_id);
     
