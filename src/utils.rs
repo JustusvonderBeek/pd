@@ -166,12 +166,3 @@ pub fn send_error(sock : &UdpSocket, connection_id : &u32, addr : &SocketAddr, e
         Err(e) => warn!("Failed to send error message: {}", e),
     };
 }
-
-/// Sends a Metadata packet to the destination with new block size
-pub fn send_metadata(sock : &UdpSocket, connection_id : &u32, addr : &SocketAddr, block_id : &u32, new_block_size : &u16){
-    let m_d = MetadataPacket::serialize(connection_id, block_id, new_block_size);
-    match sock.send_to(&m_d, addr) {
-        Ok(s) => debug!("Sent {} bytes of metadata message", s),
-        Err(e) => warn!("Failed to send error message: {}", e),
-    };
-}
