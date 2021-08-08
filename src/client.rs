@@ -307,7 +307,7 @@ impl TBDClient {
                     }
                 };
                 if err.connection_id == self.connection_id {
-                    error!("Received an error instead of a data packet: ErrorCode == {}", err.error_code);
+                    error!("Received an error instead of a data packet: ErrorCode == {:x}", err.error_code);
                     // Abort the file transfer
                     std::process::exit(0);
                 } else {
@@ -332,7 +332,7 @@ impl TBDClient {
 
             if data.connection_id != self.connection_id {
                 error!("Connection IDs do not match!");
-                send_error(&sock, &addr, ErrorTypes::Abort);
+                send_error(&sock, &self.connection_id, &addr, ErrorTypes::Abort);
                 // Ignore
                 continue;
             }
@@ -419,21 +419,17 @@ impl TBDClient {
                 let mut packet_buffer = vec![0; PACKET_SIZE];
                 let mut len : usize = 0;
                 let mut addr : SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
-                if i == 0 {
-                    let (x, y) = self.receive_next(sock, &mut packet_buffer);
-                    len = x;
-                    addr = y;
-                } else {
-                    let (x, y) = match self.receive_next_timeout(sock, TIMEOUT, &mut packet_buffer) {
-                        Some(s) => s,
-                        None => {
-                            info!("Connection timed out! Starting retransmission...");
-                            break;
-                        }
-                    };
-                    len = x;
-                    addr = y;
-                }
+                
+                // TODO: Timeout
+                let (x, y) = match self.receive_next_timeout(sock, TIMEOUT, &mut packet_buffer) {
+                    Some(s) => s,
+                    None => {
+                        info!("Connection timed out! Starting retransmission...");
+                        break;
+                    }
+                };
+                len = x;
+                addr = y;
 
                 debug!("Received {} bytes from {}", len, addr);
                 
@@ -472,7 +468,7 @@ impl TBDClient {
     
                 if data.connection_id != self.connection_id {
                     error!("Connection IDs do not match!");
-                    send_error(&sock, &addr, ErrorTypes::Abort);
+                    send_error(&sock, &self.connection_id, &addr, ErrorTypes::Abort);
                     // Ignore
                     continue;
                 }
