@@ -8,11 +8,16 @@ pub const PACKET_SIZE : usize = 1280;
 pub const DATA_HEADER : usize = 10;
 pub const DATA_SIZE : usize = PACKET_SIZE - DATA_HEADER;
 
-pub fn bind_to_socket(ip : &String, port : &u32, retry : u32) -> io::Result<UdpSocket> {
-    let mut addr = String::from(ip);
+pub fn compute_hostname(ip : &String, port : &u32) -> String {
+    let mut addr = String::from(ip.trim().trim_matches(char::from(0)));
     addr.push_str(":");
     addr.push_str(&port.to_string());
-    debug!("Binding to {}...", addr);
+    debug!("Hostname: {}", addr);
+    addr
+}
+
+pub fn bind_to_socket(ip : &String, port : &u32, retry : u32) -> io::Result<UdpSocket> {
+    let addr = compute_hostname(ip, port);
     if retry <= 0 {
         let sock = UdpSocket::bind(addr);
         return sock;
@@ -103,6 +108,13 @@ pub fn compute_hash(buf : &Vec<u8>) -> Result<[u8; 32],()> {
         }
     };
     Ok(filehash)
+}
+
+pub fn compare_hashes(org : &Vec<u8>, new : &Vec<u8>) -> bool {
+    if org.len() != new.len() {
+        return false;
+    }
+    org.iter().zip(new.iter()).all(|(a,b)| a == b)
 }
 
 pub fn create_next_packet(remain : &usize, window_buffer : &Vec<u8>, seq : &usize) -> io::Result<(Vec<u8>, usize)> {
