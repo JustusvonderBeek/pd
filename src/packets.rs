@@ -229,7 +229,7 @@ pub struct MetadataPacket{
     pub connection_id : u32,     // on the wire just 24 Bits
     pub fields : u8,
     pub block_id : u32,
-    pub sequence_id : u32,
+    pub sequence_id : u16,
     pub new_block_size : u16
 }
 
@@ -265,7 +265,7 @@ impl MetadataPacket {
             connection_id : connection_id,
             fields : buffer[3],
             block_id : BigEndian::read_u32(&buffer[4..8]),
-            sequence_id : BigEndian::read_u32(&buffer[8..12]),
+            sequence_id : BigEndian::read_u16(&buffer[8..12]),
             new_block_size : BigEndian::read_u16(&buffer[12..14])
         })
     }
