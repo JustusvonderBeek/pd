@@ -1,35 +1,39 @@
+use std::{
+    thread,
+    cmp,
+    fs,
+    fs::OpenOptions,
+    time,
+    io,
+    io::Write,
+    time::Duration,
+    result::Result,
+    collections::LinkedList,
+    convert::TryInto,
+    net::{UdpSocket, SocketAddr, Ipv4Addr, IpAddr},
+};
 use pretty_hex::*;
-use std::io::{Write};
-use std::fs::{OpenOptions, File};
-use std::fs;
-use std::net::{UdpSocket, SocketAddr, Ipv4Addr, IpAddr};
-use std::{thread, time, cmp};
-use std::time::Duration;
-use std::result::Result;
-use std::collections::LinkedList;
 use math::round::ceil;
 use sha2::{Sha256, Digest};
-use std::convert::TryInto;
 use crate::cmdline_handler::Options;
 use crate::packets::*;
 use crate::utils::*;
 
-const PACKET_SIZE : usize = 1280;
-const DATA_SIZE : usize = 1270;
-const TIMEOUT : u64 = 2;
+const TIMEOUT_MS : f64 = 1000.0;
 const START_FLOW_WINDOW : u16 = 8;
-const DATA_HEADER_SIZE : usize = 10;
 const MAX_RETRANSMISSION : usize = 3;
 
 pub struct TBDClient {
     options : Options,
     received : u64,
+    offset : u64,
     connection_id : u32,
     flow_window : u16,
     block_id : u32,
     file_hash : [u8; 32],
     file_size : u64,
     server : String,
+    filename : String,
 }
 
 impl TBDClient {
@@ -37,12 +41,14 @@ impl TBDClient {
         TBDClient {
             options : opt,
             received : 0,
+            offset : 0,
             connection_id : 0,
             flow_window : START_FLOW_WINDOW,
             block_id : 0,
             file_hash : [0; 32],
             file_size : 0,
             server : String::new(),
+            filename : String::new(),
         }
     }
 
@@ -57,15 +63,15 @@ impl TBDClient {
         // Bind to any local IP address (let the system assign one)
         // Try to rebind 3 times, then stop
 
-        let sock = self.bind_to_socket(3).unwrap();
+        let sock = match bind_to_socket(&String::from("0.0.0.0"), &self.options.client_port, 3) {
+            Ok(s) => s,
+            Err(e) => return Err(e),
+        };
         debug!("Bound to local socket: {:?}", sock.local_addr());
 
-        // Create request packet for each file in the vector
-        // and obtain the file
-        let mut servername = String::from(self.options.hostname.trim().trim_matches(char::from(0)));
-        servername.push_str(":");
-        servername.push_str(&self.options.server_port.to_string());
-        self.server = String::from(&servername);
+        // Computing the useable name of the server
+        self.server = compute_hostname(&self.options.hostname, &self.options.server_port);
+        
         // Otherwise we get an error
         let filenames = self.options.filename.clone();
         
@@ -76,63 +82,86 @@ impl TBDClient {
             let request = RequestPacket::serialize(&0, &self.flow_window, &filename);
 
             // Sending the request to the server
-            match sock.send_to(&request, &servername) {
-                Ok(s) => debug!("Send {} bytes to {}", s, servername),
+            match sock.send_to(&request, &self.server) {
+                Ok(s) => debug!("Send {} bytes to {}", s, self.server),
                 Err(e) => {
-                    error!("Failed to send to {}: {}", servername, e);
-                    // In case we fail we abort the sending
+                    error!("Failed to send to {}: {}", self.server, e);
+                    // In case we fail we abort the sending because the socket is broken
                     return Err(e);
                 }
             };
             info!("Requested file: {}", filename);
+            self.filename = String::from(&filename);
 
             // Receive response from server
-            let mut packet_buffer : [u8; PACKET_SIZE as usize] = [0; PACKET_SIZE as usize];
-            let (len, addr) = self.receive_next(&sock, &mut packet_buffer);
-            debug!("Received response from {}: {}", addr, pretty_hex(&packet_buffer));
+            let (packet, len, addr) = match get_next_packet(&sock, 0.0) {
+                Ok(r) => r,
+                Err(_) => return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block")),
+            };
+            // debug!("Received response from {}: {}", addr, pretty_hex(&packet_buffer));
+            debug!("Received {} bytes response from {}", len, addr);
             
             // Check for errors and correct packet
-            if get_packet_type_client(&packet_buffer.to_vec()) == PacketType::Error {
-                let err = ErrorPacket::deserialize(&packet_buffer).unwrap();
-                warn!("Received and error from the server: ErrorCode == {:x}", err.error_code);
-                continue;
-            }
-
-            // TODO: Include handle for data packet!
-
-            if get_packet_type_client(&packet_buffer.to_vec()) != PacketType::Response {
-                error!("Expected a response packet but got something different!");
-                continue;
-            }
-
-            // Handle the response packet
-            let res = match ResponsePacket::deserialize(&packet_buffer[..len]) {
-                Ok(r) => r,
-                Err(e) => {
-                    warn!("Failed to deserialize response packet: {}", e);
+            let packet_type = get_packet_type_client(&packet);
+            match packet_type {
+                PacketType::Error => {
+                    let err = match ErrorPacket::deserialize(&packet) {
+                        Ok(e) => e,
+                        Err(_) => {
+                            error!("Failed to deserialize the error packet!");
+                            // Because we need to close the connection (do not know what the server wants us to do)
+                            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid packet"));
+                        }
+                    };
+                    warn!("Connection {} received error: ErrorCode == {}", err.connection_id, err.error_code);
                     continue;
-                }
-            };
-            
-            // Storing the current file informations
-            self.connection_id = res.connection_id;
-            self.block_id = res.block_id;
-            self.file_hash = res.file_hash;
-            self.file_size = res.file_size;
+                },
+                PacketType::Response => {
+                    let res = match ResponsePacket::deserialize(&packet[0..len]) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            warn!("Failed to deserialize response packet: {}", e);
+                            continue;
+                        }
+                    };
 
-            loop {
-                self.receive_data(&sock, &filename);        
-                if self.received >= self.file_size {
-                    break;
+                    // Storing the current file informations
+                    self.connection_id = res.connection_id;
+                    self.block_id = res.block_id;
+                    self.file_hash = res.file_hash;
+                    self.file_size = res.file_size;
+
+                    loop {
+                        self.receive_next_block(&sock);        
+                        if self.received >= self.file_size {
+                            break;
+                        }
+                    }
+                },
+                PacketType::Data => {
+                    // TODO: Add handling
+                    error!("The handling for data packets before the response is currently not implemented!");
+                    continue;
+                },
+                _ => {
+
                 }
             }
 
+            let (file, _) = match get_file(&String::from(&filename)) {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+            let hash = match compute_hash(&file) {
+                Ok(h) => h,
+                Err(_) => continue,
+            };
 
-            let eq = self.check_filehash(&filename);
-            if !eq {
+            if compare_hashes(&self.file_hash.to_vec(), &hash.to_vec()) {
                 error!("The file is corrupted. Hashes do not match!");
+                // TODO: Retransfer the file?
             } else {
-                info!("File hash is correct.");
+                info!("File hash is correct");
             }
             
         }
@@ -142,74 +171,10 @@ impl TBDClient {
         Ok(())
     }
 
-    fn bind_to_socket(&mut self, retries : u32) -> Result<UdpSocket, ()> {
-        for i in 0..retries {
-            let mut addr = String::from("0.0.0.0:");
-            let port = self.options.client_port + i;
-            addr.push_str(&port.to_string());
-            let sock = match std::net::UdpSocket::bind(&addr) {
-                Ok(s) => s,
-                Err(e) => {
-                    error!("Failed to bind to a local socket {}: {}", addr, e);
-                    continue;
-                }
-            };
-            return Ok(sock);
-        }
-        Err(())
-    }
-
-    fn receive_next(&mut self, sock : &UdpSocket, mut buf : &mut [u8]) -> (usize, SocketAddr) {
-        if sock.read_timeout().unwrap() != None {
-            match sock.set_read_timeout(None) {
-                Ok(s) => {},
-                Err(e) => {
-                    warn!("Failed to reset read timeout: {}", e);
-                }
-            };
-        }
-        loop {
-            match sock.recv_from(&mut buf) {
-                Ok(r) => break r,
-                Err(e) => {
-                    warn!("Failed to receive data: {}", e);
-                    continue;
-                }
-            };
-        }
-    }
-
-    fn receive_next_timeout(&mut self, sock : &UdpSocket, timeout : u64, mut buf : &mut [u8]) -> Option<(usize, SocketAddr)> {
-        let dur = Duration::from_secs(timeout);
-        match sock.set_read_timeout(Some(dur)) {
-            Ok(_) => {},
-            Err(e) => {
-                warn!("Failed to set read timeout {}", e);
-                return None;
-            }
-        }
-        loop {
-            
-            match sock.recv_from(&mut buf) {
-                Ok(r) => break Some(r),
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    return None;
-                },
-                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                    return None;
-                },
-                Err(e) => {
-                    warn!("Failed to receive data: {}", e);
-                    continue;
-                }
-            };
-        }
-    }
-
-    fn create_ack_list(&mut self, packets : u16) -> LinkedList<u16> {
+    fn create_new_sid(&mut self, flow_window : u16) -> LinkedList<u16> {
         let mut list = LinkedList::new();
         // Because the ID 0 is blocked for the metadata packet
-        for i in 1..packets + 1 {
+        for i in 1..flow_window + 1 {
             list.push_back(i);
         }
         list
@@ -247,127 +212,109 @@ impl TBDClient {
         (iterations, window_size as usize)
     }
 
-    fn receive_data(&mut self, sock : &UdpSocket, filename : &String) {
-        info!("Starting file transmission...");
-
-        // Compute the amount of bytes left
+    fn receive_next_block(&mut self, sock : &UdpSocket) -> io::Result<()> {
         let (iterations, window_size) = self.compute_block_params();
+        let sid = self.create_new_sid(iterations);
+
+        self.receive_data(sock, window_size, sid)
+    }
+
+    fn receive_data(&mut self, sock : &UdpSocket, window_size : usize, list : LinkedList<u16>) -> io::Result<()> {
+        info!("Starting file transmission...");
 
         // Prepare the buffer for the next whole window
         let mut window_buffer = vec![0; window_size]; // Only pure data
 
         // Prepare working vars
-        let mut i = 0;
+        let mut sid = list.clone();
+        let mut i = sid.len();
 
-        // Stores the offset in the context of the etire file
+        // Stores the offset in the context of the entire file
         let mut block_offset = self.received;
 
-        debug!("Making {} iterations in the current block {}", iterations, self.block_id);
-        let mut list = self.create_ack_list(iterations);
+        debug!("Making {} iterations in the current block {}", i, self.block_id);
         
-        // Loop through all packets of the window
+        // Loop until we received i data packets
         loop {
-            // Creating the storage for the next packet
-            let mut packet_buffer = vec![0; PACKET_SIZE];
-            
-            let (len, addr) = match self.receive_next_timeout(sock, TIMEOUT, &mut packet_buffer) {
-                Some(s) => s,
-                None => {
+            debug!("Waiting for packet: {}", i);
+            // Waiting for the next packet
+            let (packet, len, addr) = match get_next_packet(&sock, TIMEOUT_MS) {
+                Ok(r) => r,
+                Err(_) => {
                     info!("Connection timed out! Starting retransmission...");
                     break;
                 }
             };
-            // let mut len : usize = 0;
-            // let mut addr : SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
-            // if i == 0 {
-            //     let (x, y) = self.receive_next(sock, &mut packet_buffer);
-            //     len = x;
-            //     addr = y;
-            // } else {
-            //     let (x, y) = match self.receive_next_timeout(sock, TIMEOUT, &mut packet_buffer) {
-            //         Some(s) => s,
-            //         None => {
-            //             info!("Connection timed out! Starting retransmission...");
-            //             break;
-            //         }
-            //     };
-            //     len = x;
-            //     addr = y;
-            // }
-            // debug!("Received {} bytes from {}:\n{}", len, addr, pretty_hex(&packet_buffer));
             debug!("Received {} bytes from {}", len, addr);
-            
-            if get_packet_type_client(&packet_buffer.to_vec()) == PacketType::Error {
-                let err = match ErrorPacket::deserialize(&packet_buffer[0..len]) {
-                    Ok(e) => e,
-                    Err(e) => {
-                        error!("Failed to deserialize error packet: {}", e);
-                        // Close the connection. Because we cannot do anything more
-                        std::process::exit(1);
+
+            let packet_type = get_packet_type_client(&packet[0..len].to_vec());
+            match packet_type {
+                PacketType::Error => {
+                    let err = match ErrorPacket::deserialize(&packet[0..len]) {
+                        Ok(e) => e,
+                        Err(e) => {
+                            error!("Failed to deserialize error packet: {}", e);
+                            // Close the connection. Because we cannot do anything more
+                            error!("Exiting client...");
+                            std::process::exit(1);
+                        }
+                    };
+
+                    if err.connection_id == self.connection_id {
+                        error!("Received an error instead of a data packet: ErrorCode == {:x}", err.error_code);
+                        // Abort the file transfer
+                        error!("Exiting client...");
+                        std::process::exit(0);
+                    } else {
+                        warn!("Received an error with wrong connection id");
+                        continue;
                     }
-                };
-                if err.connection_id == self.connection_id {
-                    error!("Received an error instead of a data packet: ErrorCode == {:x}", err.error_code);
-                    // Abort the file transfer
-                    std::process::exit(0);
-                } else {
-                    warn!("Received an error with wrong connection id");
-                    continue;
+                },
+                PacketType::Data => {
+                    let data = match DataPacket::deserialize(&packet[0..len]) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            warn!("Failed to deserialize the data packet: {}", e);
+                            // This should be fixable in the retransmission (missing seq id)
+                            continue;
+                        }
+                    };
+
+                    if data.connection_id != self.connection_id {
+                        error!("Connection IDs do not match!");
+                        // Ignore
+                        continue;
+                    }
+
+                    if data.block_id != self.block_id {
+                        warn!("Block IDs do not match. Expected {} got {}", self.block_id, data.block_id);
+                        // Ignore
+                        continue;
+                    }
+
+                    let size = self.fill_window_buffer(&mut window_buffer, &data);
+                    sid = self.remove_from_list(&sid, data.sequence_id);
+
+                    // Advancing the received only after the complete transmission
+                    self.received += size;
+
+                    // TODO: Test
+                    i -= 1;
+                    if i == 0 {
+                        info!("Received all packets for the current block.");
+                        break;
+                    }
                 }
-            }
-
-            if get_packet_type_client(&packet_buffer.to_vec()) != PacketType::Data {
-                error!("Expected data packet but got something else!");
-                continue;
-            }
-
-            let data = match DataPacket::deserialize(&packet_buffer[0..len]) {
-                Ok(d) => d,
-                Err(e) => {
-                    warn!("Failed to deserialize the data packet: {}", e);
-                    // This should be fixable in the retransmission (missing seq id)
+                _ => {
+                    error!("Expected data packet but got something else!");
                     continue;
-                }
-            };
-
-            if data.connection_id != self.connection_id {
-                error!("Connection IDs do not match!");
-                send_error(&sock, &self.connection_id, &addr, ErrorTypes::Abort);
-                // Ignore
-                continue;
-            }
-
-            if data.block_id != self.block_id {
-                warn!("Block IDs do not match. Expected {} got {}", self.block_id, data.block_id);
-                // Ignore
-                continue;
-            }
-
-            // Copying the data at the right place into the buffer
-            // - 1 because the seq id 0 is reserved for metadata but we still want to use the space
-            let start = (data.sequence_id - 1) as usize * DATA_SIZE as usize;
-            // Copy only what we received (10 bytes header) - expect this to be the last packet
-            debug!("Start: {} Filesize {} Blockoffset {}", start, self.file_size, block_offset);
-            let p_size = cmp::min(len - DATA_HEADER_SIZE, (self.file_size - start as u64 - block_offset) as usize);
-            let end = start + p_size;
-            debug!("Start: {} P_size: {} End: {} Filesize {} Blockoffset {}", start, p_size, end, self.file_size, block_offset);
-            window_buffer[start..end].copy_from_slice(&data.data[0..p_size]);
-
-            // Ack handling
-            list = self.remove_from_list(&list, data.sequence_id);
-            // Advancing the received only after the complete transmission
-            self.received += p_size as u64;
-            
-            i += 1;
-            if i == iterations {
-                info!("Received all packets for the current block.");
-                break;
+                },
             }
         }
 
-        if list.len() != 0 {
-            info!("Missing {} packets. Starting retransmission.", list.len());
-            self.handle_retransmission(&sock, &mut window_buffer, &mut list, filename);
+        if sid.len() != 0 {
+            info!("Missing {} packets {:?}. Starting retransmission.", sid.len(), sid);
+            self.handle_retransmission(&sock, &mut window_buffer, &sid);
         } else {
             // Things we only do in a successful transmission
             
@@ -375,6 +322,8 @@ impl TBDClient {
             
             // Should we increase by one?
             self.flow_window += 1;
+            // Would only incorrect in the last block so this is irrelevant
+            self.offset += self.flow_window as u64 * DATA_SIZE as u64;
             
             // Sending the acknowledgment
             let sid = Vec::new();
@@ -386,15 +335,18 @@ impl TBDClient {
         self.block_id += 1;
 
         // Writing the current block in correct order into the file
+        let filename = String::from(&self.filename);
         if self.block_id > 1 {
             self.write_data_to_file(&filename, &window_buffer, false).unwrap();
         }
         else {
             self.write_data_to_file(&filename, &window_buffer, true).unwrap();
         }
+
+        Ok(())
     }
 
-    fn handle_retransmission(&mut self, sock : &UdpSocket, window_buffer : &mut Vec<u8>, sid : &LinkedList<u16>, filename : &String) {
+    fn handle_retransmission(&mut self, sock : &UdpSocket, window_buffer : &mut Vec<u8>, sid : &LinkedList<u16>) -> io::Result<()> {
         // Waiting for the data
         let mut l_sid : LinkedList<u16> = sid.clone();
         for i in 0..MAX_RETRANSMISSION {
@@ -421,11 +373,14 @@ impl TBDClient {
                 let mut addr : SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
                 
                 // TODO: Timeout
-                let (x, y) = match self.receive_next_timeout(sock, TIMEOUT, &mut packet_buffer) {
-                    Some(s) => s,
-                    None => {
+                let (w, x, y) = match get_next_packet(&sock, TIMEOUT_MS) {
+                    Ok(s) => s,
+                    Err(Some(_)) => {
                         info!("Connection timed out! Starting retransmission...");
                         break;
+                    },
+                    Err(_) => {
+                        return Err(io::Error::new(io::ErrorKind::InvalidData, "Failed receiving"));
                     }
                 };
                 len = x;
@@ -481,7 +436,7 @@ impl TBDClient {
     
                 let start = (data.sequence_id - 1) as usize * DATA_SIZE as usize;
                 // Copy only what we received (10 bytes header) - expect this to be the last packet
-                let p_size = cmp::min(len - DATA_HEADER_SIZE, (self.file_size - self.received) as usize);
+                let p_size = cmp::min(len - DATA_HEADER, (self.file_size - self.received) as usize);
                 let end = start + p_size;
                 debug!("Start: {} P_size: {} End: {}", start, p_size, end);
                 window_buffer[start..end].copy_from_slice(&data.data[0..p_size]);
@@ -504,6 +459,7 @@ impl TBDClient {
                 error!("Failed to receive all packets in the retransmission! Terminating...");
                 std::process::exit(1);
             }
+
         }
 
         // Sending the acknowledgment
@@ -514,30 +470,49 @@ impl TBDClient {
         send_data(&ack, &sock, &self.server);
 
         // Writing the buffers is done by the calling function
+        Ok(())
+
     }
-    
-    fn check_filehash(&mut self, file : &String) -> bool {
-        let file = match fs::read(file) {
-            Ok(f) => f,
-            Err(e) => {
-                warn!("Failed to read in the file {}\n{}", file, e);
-                return false;
-            },
-        };
-        // Compute the checksum
-        let mut hasher = Sha256::new();
-        hasher.update(&file);
-        let hash = hasher.finalize();
-        debug!("Generated hash: {}", pretty_hex(&hash));
-        let filehash : [u8;32] = match hash.as_slice().try_into() {
-            Ok(h) => h,
-            Err(e) => {
-                warn!("Failed to convert hash: {}", e);
-                return false;
-            }
-        };
-        
-        self.file_hash.iter().zip(filehash.iter()).all(|(a,b)| a == b)
+
+    fn fill_window_buffer(&mut self, buf : &mut Vec<u8>, data : &DataPacket) -> u64 {
+        // TODO: Implement and test
+
+        // Copying the data at the right place into the buffer
+        let start = (data.sequence_id - 1) as usize * DATA_SIZE as usize;
+
+        // Compute what is left after the last block received
+        let mut remain = (self.file_size - self.offset) as usize;
+        // Compute the size of the current block
+        let mut block_size = self.flow_window as usize * DATA_SIZE;
+        if block_size > remain {
+            // This means we need to cap the last packet!
+            block_size = remain;
+        }
+
+        if start > block_size {
+            error!("The start offset {} is larger than the whole block {}!", start, block_size);
+            return 0;
+        }
+
+        let end = cmp::min(data.sequence_id as usize * DATA_SIZE, block_size - start);
+        let p_size = end - start;
+        debug!("Remain: {} Block size: {} Start {} Size: {} End: {}", remain, block_size, start, p_size, end);
+
+        // Safety checks
+        if start > buf.len() || end > buf.len() {
+            error!("Cannot write from {} to {} into buffer of length {}!", start, end, buf.len());
+            return 0;
+        }
+
+        if start > data.data.len() || end > data.data.len() {
+            error!("Cannot read from {} to {} in data with length {}", start, end,data.data.len());
+            return 0;
+        }
+
+        // Copying the data
+        buf[start..end].copy_from_slice(&data.data[0..p_size]);
+
+        p_size as u64
     }
 
     fn write_data_to_file(&mut self, file: &String, data : &Vec<u8>, trunc : bool) -> std::io::Result<()> {
@@ -564,13 +539,9 @@ impl TBDClient {
             return output.write_all(&data);
         }
     }
-    
-    fn decode_error(&self, e : ErrorTypes) {
-        
-    }
 
-    fn sleep_n(&mut self, sec : u64) {
-        let duration = time::Duration::from_secs(sec);
+    fn sleep_n_ms(&mut self, ms : u64) {
+        let duration = time::Duration::from_millis(ms);
         thread::sleep(duration);
     } 
 }
