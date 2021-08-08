@@ -207,7 +207,7 @@ impl AckPacket {
         }
         for n in (12..12 + (ack_length as usize) * 2).step_by(2){
             let cur_sid = BigEndian::read_u16(&buffer[n..n+2]);
-            if cur_sid == 0{
+            if cur_sid == 0 && n >= 14{
                 return Err("Zero is an invalid SID in ACK Packet.");
             }
             sid_list.push(cur_sid);
