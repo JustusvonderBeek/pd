@@ -88,7 +88,7 @@ impl TBDClient {
             self.filename = String::from(&filename);
 
             // Receive response from server
-            let (packet, len, addr) = match get_next_packet(&sock, 0.0) {
+            let (packet, len, _) = match get_next_packet(&sock, 0.0) {
                 Ok(r) => r,
                 Err(_) => return Err(io::Error::new(io::ErrorKind::ConnectionReset, "Did not receive an answer")),
             };
@@ -211,23 +211,33 @@ impl TBDClient {
             let mut list = match self.receive(sock, window_size, sid) {
                 Ok(_) => {
                     if self.received >= self.file_size {
+                        info!("Received all packets!");
                         break;
                     }
+                    debug!("Finished block {}", self.block_id - 1);
                     continue;
                 },
                 Err(list) => list,
             };
-            'inner: for _ in 0..MAX_RETRANSMISSION {
+            'inner: for i in 0..MAX_RETRANSMISSION {
                 let new_list = match self.receive(sock, window_size, list) {
                     Ok(_) => {
                         if self.received >= self.file_size {
+                            info!("Received all packets!");
                             break 'outer;
                         }
+                        debug!("Finished block {}", self.block_id - 1);
                         break 'inner;
                     },
-                    Err(list) => list,
+                    Err(list) => {
+                        debug!("Failed retransmission {}", i);
+                        list
+                    },
                 };
                 list = new_list;
+                if i + 1 == MAX_RETRANSMISSION {
+                    return;
+                }
             }
         }
     }
@@ -252,7 +262,7 @@ impl TBDClient {
             
             'inner: loop {
                 // Waiting for the next packet
-                let (packet, len, addr) = match get_next_packet(&sock, TIMEOUT_MS) {
+                let (packet, len, _) = match get_next_packet(&sock, TIMEOUT_MS) {
                     Ok(r) => r,
                     Err(None) => {
                         info!("Connection timed out! Starting retransmission...");
@@ -313,6 +323,7 @@ impl TBDClient {
     
                         // Advancing the received only after the complete transmission
                         self.received += size;
+                        i -= 1;
                         break 'inner;
                     }
                     _ => {
@@ -324,7 +335,21 @@ impl TBDClient {
         }
 
         if sid.len() != 0 {
-            info!("Missing {} packets {:?}", sid.len(), sid);
+            info!("Missing {} packets: {:?}", sid.len(), sid);
+            // Sending the nack
+            let mut vec : Vec<u16> = Vec::with_capacity(sid.len());
+            for seq in &sid {
+                vec.push(*seq);
+            }
+            let nack = AckPacket::serialize(&self.connection_id, &self.block_id, &self.flow_window, &(sid.len() as u16), &vec);
+            match sock.send_to(&nack, &self.server) {
+                Ok(_) => {},
+                Err(e) => {
+                    error!("Failed to send NACK to server: {}", e);
+                    error!("Exiting client...");
+                    std::process::exit(1);
+                }
+            }
             return Err(sid);
         } else {
             self.offset += self.flow_window as u64 * DATA_SIZE as u64;
@@ -373,10 +398,9 @@ impl TBDClient {
             return 0;
         }
 
-        debug!("Block Size: {} Start: {} Seq ID: {}", block_size, start, data.sequence_id);
         let end = cmp::min(data.sequence_id as usize * DATA_SIZE, block_size);
         let p_size = end - start;
-        debug!("Remain: {} Block size: {} Start: {} Size: {} End: {}", remain, block_size, start, p_size, end);
+        // debug!("Remain: {} Block size: {} Start: {} Size: {} End: {}", remain, block_size, start, p_size, end);
 
         // Safety checks
         if start > buf.len() || end > buf.len() {
