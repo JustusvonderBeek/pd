@@ -28,6 +28,7 @@ pub struct TBDClient {
     file_size : u64,
     server : String,
     filename : String,
+    retransmission : bool,
 }
 
 impl TBDClient {
@@ -43,6 +44,7 @@ impl TBDClient {
             file_size : 0,
             server : String::new(),
             filename : String::new(),
+            retransmission : false,
         }
     }
 
@@ -222,6 +224,7 @@ impl TBDClient {
                 },
                 Err(list) => list,
             };
+            self.retransmission = true;
             'inner: for i in 0..MAX_RETRANSMISSION {
                 let new_list = match self.receive(sock, &mut window_buffer, list) {
                     Ok(_) => {
@@ -242,6 +245,7 @@ impl TBDClient {
                     return;
                 }
             }
+            self.retransmission = false;
         }
     }
 
@@ -353,7 +357,7 @@ impl TBDClient {
             return Err(sid);
         } else {
             self.offset += self.flow_window as u64 * DATA_SIZE as u64;
-            if list.len() < self.flow_window as usize {
+            if self.retransmission {
                 // We did a retransmission
                 self.flow_window = ceil(self.flow_window as f64 / 2.0, 0) as u16;
             } else {
