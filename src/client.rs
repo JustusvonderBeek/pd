@@ -242,6 +242,7 @@ impl TBDClient {
         let mut i = sid.len();
 
         debug!("Making {} iterations in the current block {}", i, self.block_id);
+        debug!("Expecting: {:?}", list);
         
         // Loop until we received i data packets
         'outer: for seq in &list {
@@ -311,13 +312,6 @@ impl TBDClient {
     
                         // Advancing the received only after the complete transmission
                         self.received += size;
-    
-                        i -= 1;
-                        if i == 0 {
-                            info!("Received all packets for the current block.");
-                            break 'outer;
-                        }
-
                         break 'inner;
                     }
                     _ => {
@@ -364,8 +358,6 @@ impl TBDClient {
     }
 
     fn fill_window_buffer(&mut self, buf : &mut Vec<u8>, data : &DataPacket) -> u64 {
-        // TODO: Implement and test
-
         // Copying the data at the right place into the buffer
         let start = (data.sequence_id - 1) as usize * DATA_SIZE as usize;
 
@@ -373,19 +365,17 @@ impl TBDClient {
         let remain = (self.file_size - self.offset) as usize;
         // Compute the size of the current block
         let mut block_size = self.flow_window as usize * DATA_SIZE;
-        if block_size > remain {
-            // This means we need to cap the last packet!
-            block_size = remain;
-        }
+        block_size = cmp::min(block_size, remain);
 
         if start > block_size {
             error!("The start offset {} is larger than the whole block {}!", start, block_size);
             return 0;
         }
 
-        let end = cmp::min(data.sequence_id as usize * DATA_SIZE, block_size - start);
+        debug!("Block Size: {} Start: {} Seq ID: {}", block_size, start, data.sequence_id);
+        let end = cmp::min(data.sequence_id as usize * DATA_SIZE, block_size);
         let p_size = end - start;
-        debug!("Remain: {} Block size: {} Start {} Size: {} End: {}", remain, block_size, start, p_size, end);
+        debug!("Remain: {} Block size: {} Start: {} Size: {} End: {}", remain, block_size, start, p_size, end);
 
         // Safety checks
         if start > buf.len() || end > buf.len() {
