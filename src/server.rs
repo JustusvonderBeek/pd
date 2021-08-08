@@ -1,4 +1,3 @@
-
 use std::{
     io,
     thread,
@@ -9,7 +8,6 @@ use std::{
     net::{UdpSocket, SocketAddr},
     io::{prelude::*, Read, SeekFrom}
 };
-use pretty_hex::*;
 use rand::Rng;
 use math::round::ceil;
 use crate::cmdline_handler::Options;
@@ -279,7 +277,32 @@ impl TBDServer {
             _sid = sid_list;
             _sent = connection.sent;
             _flow_window = connection.flow_window;
+
+            // After we can successfully satisfy the information request we also need to send a Metadata packet including the size of the next block
+            let mut new_block_size;
+            if connection.slow_start {
+                // We are still in the slow_start phase and our window will double in size
+                new_block_size = _flow_window * 2;
+            }else{
+                // Otherwise we follow an AIMD strategy so the next block in case of no losses is incremented by 1
+                new_block_size = _flow_window + 1;
+            }
+    
+            let m_d = MetadataPacket::serialize(connection_id, &connection.block_id, &new_block_size);
+            match sock.send_to(&m_d, connection.endpoint) {
+                Ok(s) => {
+                    debug!("Sent {} bytes of metadata package to {}", s, connection.endpoint); 
+                    s
+                },
+                Err(e) => {
+                    error!("Failed to send metadata to {}: {}", connection.endpoint, e);
+                    send_error(&sock, connection_id, &connection.endpoint, ErrorTypes::Abort);
+                    self.remove_state(connection_id.to_owned());
+                    return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block"));
+                }
+            };
         }
+
         self.send_block(sock, &_sid, connection_id, _sent, _flow_window)
     }
 
@@ -346,30 +369,6 @@ impl TBDServer {
                 error!("Failed to read in the next block of file: {}", filename);
                 send_error(&sock, connection_id, &connection.endpoint, ErrorTypes::Abort);
                 return Err(io::Error::new(io::ErrorKind::Interrupted, "Failed to read packet in"));
-            }
-        };
-
-        // After we can successfully satisfy the information request we also need to send a Metadata packet including the size of the next block
-        let mut new_block_size;
-        if connection.slow_start {
-            // We are still in the slow_start phase and our window will double in size
-            new_block_size = flow_window * 2;
-        }else{
-            // Otherwise we follow an AIMD strategy so the next block in case of no losses is incremented by 1
-            new_block_size = flow_window + 1;
-        }
-
-        let m_d = MetadataPacket::serialize(connection_id, &connection.block_id, &new_block_size);
-        match sock.send_to(&m_d, connection.endpoint) {
-            Ok(s) => {
-                debug!("Sent {} bytes of metadata package to {}", s, connection.endpoint); 
-                s
-            },
-            Err(e) => {
-                error!("Failed to send metadata to {}: {}", connection.endpoint, e);
-                send_error(&sock, connection_id, &connection.endpoint, ErrorTypes::Abort);
-                self.remove_state(connection_id.to_owned());
-                return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block"));
             }
         };
 
