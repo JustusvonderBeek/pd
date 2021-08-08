@@ -236,6 +236,10 @@ impl TBDServer {
                             let mut flow_window;
                             if connection.slow_start {
                                 connection.slow_start_next_block = connection.slow_start_next_block * 2;
+                                if connection.slow_start_next_block > connection.ssthresh{
+                                    // If we exceed the slowstart threshold we reduce our window
+                                    connection.slow_start_next_block = connection.ssthresh;
+                                }
                                 flow_window = connection.slow_start_next_block;
                                 debug!("We are in slow start increasing from {} to {}", connection.flow_window, connection.slow_start_next_block);
                             }else {
