@@ -136,14 +136,14 @@ pub fn send_data(buf : &Vec<u8>, sock : &UdpSocket, addr : &String) {
     };
 }
 
-pub fn send_error(sock : &UdpSocket, addr : &SocketAddr, e : ErrorTypes) {
+pub fn send_error(sock : &UdpSocket, connection_id : &u32, addr : &SocketAddr, e : ErrorTypes) {
     let val = match e {
         ErrorTypes::FileUnavailable => 0x01,
         ErrorTypes::ConnectionRefused => 0x02,
         ErrorTypes::FileModified => 0x03,
         ErrorTypes::Abort => 0x04,
     };
-    let err = ErrorPacket::serialize(&0, &0, &val);
+    let err = ErrorPacket::serialize(connection_id, &0, &val);
     match sock.send_to(&err, addr) {
         Ok(s) => debug!("Sent {} bytes of error message", s),
         Err(e) => warn!("Failed to send error message: {}", e),
