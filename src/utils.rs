@@ -1,6 +1,6 @@
 use std::{
-    io, 
-    fs,
+    io::{self, Write},
+    fs::{self, OpenOptions},
     time::Duration, 
     convert::TryInto,
     net::{UdpSocket, SocketAddr},
@@ -171,4 +171,47 @@ pub fn send_error(sock : &UdpSocket, connection_id : &u32, addr : &SocketAddr, e
         Ok(s) => debug!("Sent {} bytes of error message", s),
         Err(e) => warn!("Failed to send error message: {}", e),
     };
+}
+
+pub fn write_state(offset : &u64, filename : &String) {
+    let mut file = String::from(filename);
+    file.push_str(".part");
+
+    let mut output = match OpenOptions::new().write(true).truncate(true).create(true).open(&file) {
+        Ok(f) => f,
+        Err(e) => {
+            warn!("Failed to create state file {}: {}", file, e);
+            return;
+        }
+    };
+    let state = offset.to_be_bytes();
+    match output.write_all(&state) {
+        Ok(_) => {},
+        Err(e) => {
+            warn!("Failed to create state file {}, {}", file, e);
+        },
+    }
+}
+
+pub fn read_state(filename : &String) -> io::Result<u64> {
+    let mut file = String::from(filename);
+    file.push_str(".part");
+
+    let file = match fs::read(&filename) {
+        Ok(f) => f,
+        Err(_) => {
+            warn!("Failed to read state");
+            return Err(io::Error::new(io::ErrorKind::NotFound, "Cannot read state"));
+        },
+    };
+    let (int_bytes, _) = file.split_at(std::mem::size_of::<u64>());
+    let offset = u64::from_be_bytes(int_bytes.try_into().unwrap());
+    Ok(offset)
+}
+
+pub fn delete_state(filename : &String) {
+    match fs::remove_file(filename) {
+        Ok(_) => info!("Deleted state information for file {}", filename),
+        Err(e) => warn!("Failed to remove state for file {}: {}", filename, e),
+    }
 }
