@@ -200,7 +200,7 @@ pub fn read_state(filename : &String) -> io::Result<u64> {
     let file = match fs::read(&filename) {
         Ok(f) => f,
         Err(_) => {
-            warn!("Failed to read state");
+            info!("No state information found");
             return Err(io::Error::new(io::ErrorKind::NotFound, "Cannot read state"));
         },
     };
