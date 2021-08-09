@@ -1,7 +1,7 @@
 extern crate pnet;
 
 use dns_lookup::lookup_host;
-use pnet::datalink::{self, NetworkInterface, interfaces};
+use pnet::datalink;
 
 /* The commandline options */
 #[derive(Clone)]
