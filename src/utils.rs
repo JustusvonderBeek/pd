@@ -194,8 +194,8 @@ pub fn write_state(offset : &u64, filename : &String) {
 }
 
 pub fn read_state(filename : &String) -> io::Result<u64> {
-    let mut file = String::from(filename);
-    file.push_str(".part");
+    let mut filename = String::from(filename);
+    filename.push_str(".part");
 
     let file = match fs::read(&filename) {
         Ok(f) => f,
@@ -210,7 +210,10 @@ pub fn read_state(filename : &String) -> io::Result<u64> {
 }
 
 pub fn delete_state(filename : &String) {
-    match fs::remove_file(filename) {
+    let mut file = String::from(filename);
+    file.push_str(".part");
+    
+    match fs::remove_file(file) {
         Ok(_) => info!("Deleted state information for file {}", filename),
         Err(e) => warn!("Failed to remove state for file {}: {}", filename, e),
     }
