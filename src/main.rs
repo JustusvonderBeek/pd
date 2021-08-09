@@ -35,7 +35,7 @@ fn init_logger(opt : &Options) {
     CombinedLogger::init(
         vec![
             TermLogger::new(LevelFilter::Debug, Config::default(), TerminalMode::Mixed, ColorChoice::Auto),
-            WriteLogger::new(LevelFilter::Trace, Config::default(), File::create(opt.logfile.to_string()).unwrap()),
+            WriteLogger::new(LevelFilter::Debug, Config::default(), File::create(opt.logfile.to_string()).unwrap()),
         ]
     ).unwrap();
 
