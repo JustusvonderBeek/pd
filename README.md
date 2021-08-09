@@ -5,4 +5,4 @@ This repository contains the implementation of the TBD protocol from group 3 and
 The program can be build with cargo
 It is run with
 
-    cargo run -- [options]
+    cargo run --release -- [options (see -h)]
