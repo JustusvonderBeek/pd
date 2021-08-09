@@ -4,3 +4,5 @@ target/
 MultipleBlock.txt.new
 MultiplePacketPadding.txt.new
 OnePacket.txt
+*.pdf
+*.pdf*
