@@ -441,7 +441,7 @@ impl TBDClient {
                     // Slow start has ended
                     self.slow_start = false;
                 }else{
-                    self.flow_window = ceil(self.congestion_window as f64 / 2.0, 0) as u16;
+                    self.flow_window = ceil(self.flow_window as f64 / 2.0, 0) as u16;
                 }
             } else {
                 self.flow_window = self.congestion_window;
