@@ -15,7 +15,7 @@ use crate::packets::*;
 use crate::utils::*;
 
 const MAX_FLOW_WINDOW : u16 = 100;
-const DEFAULT_FLOW_WINDOW : u16 = 8;
+const DEFAULT_FLOW_WINDOW : u16 = 16;
 
 pub struct TBDServer {
     options : Options,
@@ -107,8 +107,12 @@ impl TBDServer {
                     };
         
                     // Limit the flow window to the max of the server
-                    let mut flow_window = request.flow_window;
-                    if request.flow_window > MAX_FLOW_WINDOW {
+                    let mut flow_window = DEFAULT_FLOW_WINDOW;
+                    if flow_window > request.flow_window {
+                        flow_window = request.flow_window;
+                    }
+                    
+                    if flow_window > MAX_FLOW_WINDOW {
                         flow_window = MAX_FLOW_WINDOW;
                     }
 
@@ -131,7 +135,7 @@ impl TBDServer {
                     }
         
                     // Wait a short period of time
-                    self.sleep_n_ms(100);
+                    self.sleep_n_ms(50);
         
                     // Start transfer
                     match self.send_next_block(&connection_id, &sock) {
@@ -178,11 +182,10 @@ impl TBDServer {
                     if ack.length > 0 {
                         // Retransmission
                         
-                        // TODO: Handling
                         match self.handle_retransmission(&sock, &ack.sid_list, &connection_id) {
                             Ok(_) => {},
                             Err(_) => {
-
+                                warn!("Failed the retransmission");
                             },
                         };
 
@@ -196,18 +199,18 @@ impl TBDServer {
                             Some(s) => s,
                             None => {
                                 error!("Connection with ID {} does not exists", ack.connection_id);
-                                // TODO: Sending an abort error?
                                 continue;
                             }
                         };
 
-                        // Advance the parameter because of successfull transmission
+                        // Advance the parameter because of successful transmission
                         debug!("Successfully transmitted block {} of connection {}", connection.block_id, connection_id);
                         
                         // Check if the file transfer is complete and the state can be deleted
-                        let mut sent = (DATA_SIZE * connection.flow_window as usize) as u64; // Over approximation (but if it is too much this should still be fine)
+                        // Over approximation (but if it is too much this should still be fine)
+                        let mut sent = (DATA_SIZE * connection.flow_window as usize) as u64; 
                         
-                        if connection.sent + sent > connection.file_size {
+                        if connection.sent + sent >= connection.file_size {
                             info!("File {} successfully transferred! Removing state...", connection.file);
                             self.remove_state(connection_id);
                             continue;
@@ -215,23 +218,30 @@ impl TBDServer {
                         connection.client_max_flow = ack.flow_window;
                         
                         if connection.retransmission {
+
                             // Cut the window in half regardless of the client
                             if connection.slow_start {
                                 connection.slow_start = false;
                                 connection.slow_start_next_block = ceil(connection.slow_start_next_block as f64 / 2.0, 0) as u16;
                                 connection.flow_window = connection.slow_start_next_block;
-                            }else{
+                                debug!("Set - Max C Flow: {} Slow start: {} SS next block: {} Flow Window: {}", connection.client_max_flow, connection.slow_start, connection.slow_start_next_block, connection.flow_window);
+                            } else {
                                 // TODO: Original assumption was + 1 from the client perspective
                                 connection.slow_start_next_block = ceil((connection.slow_start_next_block + 1) as f64 / 2.0, 0) as u16;
                                 connection.flow_window = connection.slow_start_next_block;
+                                debug!("Set - Max C Flow: {} SS next block: {} Flow Window: {}", connection.client_max_flow, connection.slow_start_next_block, connection.flow_window);
                             }
+
                             if connection.flow_window > connection.client_max_flow {
                                 // Here server never will be too small
                                 connection.flow_window = connection.client_max_flow;
                                 connection.slow_start_next_block = connection.client_max_flow;
+                                debug!("Set - Max C Flow: {} SS next block: {} Flow Window: {}", connection.client_max_flow, connection.slow_start_next_block, connection.flow_window);
                             }
+
                             connection.retransmission = false;
                         } else {
+
                             // Cap the maximal flow window
                             let mut flow_window;
                             if connection.slow_start {
@@ -241,10 +251,14 @@ impl TBDServer {
                                     connection.slow_start_next_block = connection.ssthresh;
                                 }
                                 flow_window = connection.slow_start_next_block;
-                                debug!("We are in slow start increasing from {} to {}", connection.flow_window, connection.slow_start_next_block);
+                                // debug!("We are in slow start increasing from {} to {}", connection.flow_window, connection.slow_start_next_block);
+                                debug!("Set - SS next block: {} Flow Window: {}", connection.slow_start_next_block, flow_window);
+
                             }else {
                                 connection.slow_start_next_block += 1;
                                 flow_window = connection.slow_start_next_block;
+                                debug!("Set - SS next block: {} Flow Window: {}", connection.slow_start_next_block, flow_window);
+
                             }
                             // If we exceed the servers limit we stop increasing
                             if flow_window > MAX_FLOW_WINDOW || flow_window > connection.client_max_flow {
@@ -252,6 +266,8 @@ impl TBDServer {
                                 let new_flow = cmp::min(MAX_FLOW_WINDOW, connection.client_max_flow);
                                 flow_window = new_flow;
                                 connection.slow_start_next_block = new_flow;
+                                debug!("Set - SS next block: {} Flow Window: {}", connection.slow_start_next_block, flow_window);
+
                             }
                             debug!("Setting flow window to {}", flow_window);
                             connection.flow_window = flow_window;
@@ -261,14 +277,10 @@ impl TBDServer {
                         connection.sent = sent;
                         connection.block_id += 1;
 
-                        // TODO: Handle the error
                         match self.send_next_block(&connection_id, &sock) {
-                            Ok(_) => {},
-                            Err(_) => {},
+                            _ => {/* left empty */},
                         }
                     }
-                    
-
                 },
                 // All other packets should not be received on the server side
                 _ => {
