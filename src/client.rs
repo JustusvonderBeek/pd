@@ -64,7 +64,7 @@ impl TBDClient {
         // Bind to any local IP address (let the system assign one)
         // Try to rebind 3 times, then stop
 
-        let sock = match bind_to_socket(&String::from("0.0.0.0"), &self.options.client_port, 3) {
+        let sock = match bind_to_socket(&String::from(&self.options.hostname), &self.options.client_port, 3) {
             Ok(s) => s,
             Err(e) => return Err(e),
         };
