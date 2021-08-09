@@ -14,8 +14,8 @@ use crate::cmdline_handler::Options;
 use crate::packets::*;
 use crate::utils::*;
 
-const TIMEOUT_MS : f64 = 1000.0;
-const START_FLOW_WINDOW : u16 = 8;
+const TIMEOUT_MS : f64 = 500.0;
+const START_FLOW_WINDOW : u16 = 16;
 const MAX_RETRANSMISSION : usize = 3;
 
 pub struct TBDClient {
