@@ -17,7 +17,7 @@ use crate::utils::*;
 
 const TIMEOUT_MS : f64 = 1000.0;
 const INIT_TIMEOUT_MS : f64 = TIMEOUT_MS * 3.0;
-const START_FLOW_WINDOW : u16 = 16;
+const START_FLOW_WINDOW : u16 = 8;
 const MAX_FLOW_WINDOW : u16 = 40;
 const MAX_RETRANSMISSION : usize = 3;
 
@@ -81,16 +81,21 @@ impl TBDClient {
         
         for filename in filenames {
             
-            let offset = match read_state(&filename) {
-                Ok(o) => {
-                    info!("Continue download at offset: {}", o);
-                    o
-                },
-                Err(_) => {
-                    info!("Starting new download...");
-                    0
-                },
-            };
+            let mut offset = 0;
+            if !self.options.overwrite {
+                offset = match read_state(&filename) {
+                    Ok(o) => {
+                        info!("Continue download at offset: {}", o);
+                        o
+                    },
+                    Err(_) => {
+                        info!("Starting new download...");
+                        0
+                    },
+                };
+            } else {
+                info!("Starting new download, overwriting any existing file...");
+            }
 
             // The initial flow window is set by the application implementation
             let request = RequestPacket::serialize(&offset, &self.flow_window, &filename);
@@ -141,6 +146,7 @@ impl TBDClient {
                     // Storing the current file informations
                     self.connection_id = res.connection_id;
                     self.offset = offset;
+                    self.received = offset;
                     self.block_id = res.block_id;
                     self.file_hash = res.file_hash;
                     self.file_size = res.file_size;
@@ -181,7 +187,7 @@ impl TBDClient {
             }
         }
 
-        info!("Finished file transfer");
+        info!("Ending file transfer");
     
         Ok(())
     }
@@ -453,10 +459,9 @@ impl TBDClient {
 
             // Writing the current block in correct order into the file
             let filename = String::from(&self.filename);
-            if self.block_id > 1 {
+            if self.block_id > 1 || self.offset > self.flow_window as u64 * DATA_SIZE as u64 {
                 self.write_data_to_file(&filename, &window_buffer, false).unwrap();
-            }
-            else {
+            } else {
                 self.write_data_to_file(&filename, &window_buffer, true).unwrap();
             }
 
