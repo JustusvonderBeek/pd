@@ -68,6 +68,7 @@ pub fn parse_cmdline(args : Vec<String>) -> Option<Options> {
         }
 
         resolve_hostname(&mut settings);
+        let mut pq = 0;
 
         while i < args.len() {
             let _str = args.get(i).unwrap();
@@ -86,11 +87,13 @@ pub fn parse_cmdline(args : Vec<String>) -> Option<Options> {
                     let p = args.get(i + 1).expect("Expected a probability p but got nothing!");
                     settings.p = p.parse::<f64>().unwrap();
                     i += 1;
+                    pq += 1;
                 },
                 "-q" => {
                     let q = args.get(i + 1).expect("Expected a probability q but got nothing!");
                     settings.q = q.parse::<f64>().unwrap();
                     i += 1;
+                    pq += 2;
                 },
                 "-l" => {
                     let logfile = args.get(i + 1).expect("Expected a logfile but got nothing!");
@@ -108,6 +111,13 @@ pub fn parse_cmdline(args : Vec<String>) -> Option<Options> {
             }
             i += 1;
         }
+        
+        match pq {
+            1 => settings.q = settings.p,
+            2 => settings.p = settings.q,
+            _ => {},
+        }
+
         return Some(settings)
     }
     None
