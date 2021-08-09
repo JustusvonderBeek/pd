@@ -1,5 +1,10 @@
-use std::net::{UdpSocket, SocketAddr};
-use std::{io, fs, time::Duration, convert::TryInto};
+use std::{
+    io, 
+    fs,
+    time::Duration, 
+    convert::TryInto,
+    net::{UdpSocket, SocketAddr},
+};
 use pretty_hex::*;
 use sha2::{Sha256, Digest};
 use crate::packets::*;
@@ -101,6 +106,7 @@ pub fn get_file(file : &String) -> Result<(Vec<u8>, String), ()> {
 }
 
 pub fn compute_hash(buf : &Vec<u8>) -> Result<[u8; 32],()> {
+    info!("Computing the file hash...");
     let mut hasher = Sha256::new();
     hasher.update(buf);
     let hash = hasher.finalize();
