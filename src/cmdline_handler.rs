@@ -123,6 +123,12 @@ pub fn parse_cmdline(args : Vec<String>) -> Option<Options> {
             i += 1;
         }
         
+        if !settings.server {
+            let mut s = String::from(settings.logfile);
+            s.push_str(".client");
+            settings.logfile = String::from(&s);
+        }
+
         match pq {
             1 => settings.q = settings.p,
             2 => settings.p = settings.q,
