@@ -16,6 +16,7 @@ use crate::utils::*;
 
 const MAX_FLOW_WINDOW : u16 = 100;
 const DEFAULT_FLOW_WINDOW : u16 = 16;
+const SLOW_START_THRESH : u16 = u16::MAX;
 
 pub struct TBDServer {
     options : Options,
@@ -497,8 +498,8 @@ impl TBDServer {
             sent : offset,
             endpoint : remote,
             retransmission : false,
-            slow_start_next_block : 8,  // Default we start with 8 Blocks according to spec
-            ssthresh : u16::MAX,
+            slow_start_next_block : DEFAULT_FLOW_WINDOW,  // Default we start with 8 Blocks according to spec
+            ssthresh : SLOW_START_THRESH,
             slow_start : true,
             client_max_flow : u16::MAX,
         };
