@@ -1,4 +1,7 @@
+extern crate pnet;
+
 use dns_lookup::lookup_host;
+use pnet::datalink::{self, NetworkInterface, interfaces};
 
 /* The commandline options */
 #[derive(Clone)]
@@ -7,6 +10,7 @@ pub struct Options {
     pub server_port: u32,
     pub server: bool,
     pub hostname: String,
+    pub local_hostname : String,
     pub p: f64,
     pub q: f64,
     pub filename: Vec<String>,
@@ -18,7 +22,8 @@ fn default_options() -> Options {
         client_port: 6001,
         server_port: 5001,
         server: false,
-        hostname: String::from("127.0.0.1"),
+        hostname: String::new(),
+        local_hostname : String::new(),
         p: 0.0,
         q: 0.0,
         filename: vec![],
@@ -57,12 +62,12 @@ pub fn parse_cmdline(args : Vec<String>) -> Option<Options> {
                 settings.server = true;
                 i += 1;
                 if args.len() > 2 && !args[i].starts_with('-') {
-                    settings.hostname = String::from(&args[i]);
+                    settings.hostname.push_str(&args[i]);
                     i += 1;
                 }
             },
             _ => {
-                settings.hostname = String::from(&args[i]);
+                settings.hostname.push_str(&args[i]);
                 i += 1;
             },
         }
@@ -135,8 +140,21 @@ fn resolve_hostname(settings : &mut Options) {
             };
             println!("Resolved hostname {} to {}", settings.hostname, ips[0]);
             settings.hostname = String::from(ips[0].to_string());
-            return;
+            break;
         }
     }
-
+    if !settings.server {
+        let interfaces = datalink::interfaces();
+        let interface = interfaces.iter().find(|i| i.is_up() && !i.is_loopback() && !i.ips.is_empty());
+        let interface = match interface {
+            Some(i) => i,
+            None => {
+                settings.local_hostname.push_str("127.0.0.1");
+                return;
+            },
+        };
+        let ip = interface.ips[0].ip();
+        settings.local_hostname.push_str(&ip.to_string());
+        // println!("Found IP: {}", settings.local_hostname);
+    }
 }
