@@ -14,8 +14,9 @@ use crate::cmdline_handler::Options;
 use crate::packets::*;
 use crate::utils::*;
 
-const TIMEOUT_MS : f64 = 500.0;
-const START_FLOW_WINDOW : u16 = 16;
+const TIMEOUT_MS : f64 = 3000.0;
+const START_FLOW_WINDOW : u16 = 8;
+const MAX_FLOW_WINDOW : u16 = 40;
 const MAX_RETRANSMISSION : usize = 3;
 
 pub struct TBDClient {
@@ -397,7 +398,7 @@ impl TBDClient {
             for seq in &sid {
                 vec.push(*seq);
             }
-            let nack = AckPacket::serialize(&self.connection_id, &self.block_id, &self.flow_window, &(sid.len() as u16), &vec);
+            let nack = AckPacket::serialize(&self.connection_id, &self.block_id, &MAX_FLOW_WINDOW, &(sid.len() as u16), &vec);
             match sock.send_to(&nack, &self.server) {
                 Ok(_) => {},
                 Err(e) => {
@@ -412,7 +413,7 @@ impl TBDClient {
             if self.retransmission {
                 // We did a retransmission
                 if self.slow_start {
-                    self.flow_window = ceil(self.congestion_window as f64 / 4.0, 0) as u16;
+                    self.flow_window = ceil(self.flow_window as f64 / 2.0, 0) as u16;
                     // Slow start has ended
                     self.slow_start = false;
                 }else{
@@ -427,7 +428,7 @@ impl TBDClient {
             
             // Sending the acknowledgment
             let sid = Vec::new();
-            let ack = AckPacket::serialize(&self.connection_id, &self.block_id, &self.flow_window, &0, &sid);
+            let ack = AckPacket::serialize(&self.connection_id, &self.block_id, &MAX_FLOW_WINDOW, &0, &sid);
             debug!("Created ACK: {}", pretty_hex(&ack));
             send_data(&ack, &sock, &self.server);
             
