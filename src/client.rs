@@ -238,7 +238,6 @@ impl TBDClient {
     fn receive_data(&mut self, sock : &UdpSocket) {
         'outer: loop {
             self.retransmission = false;
-            write_state(&self.offset, &self.filename);
             let (iterations, window_size) = self.compute_block_params();
             let sid = self.create_new_sid(iterations);
             let mut window_buffer = vec![0; window_size];
@@ -433,6 +432,7 @@ impl TBDClient {
             }
             return Err(sid);
         } else {
+            let pre_offset = self.offset;
             self.offset += self.flow_window as u64 * DATA_SIZE as u64;
             if self.retransmission {
                 // We did a retransmission
@@ -459,7 +459,7 @@ impl TBDClient {
 
             // Writing the current block in correct order into the file
             let filename = String::from(&self.filename);
-            if self.block_id > 1 || self.offset > self.flow_window as u64 * DATA_SIZE as u64 {
+            if self.block_id > 1 || pre_offset > 0 {
                 self.write_data_to_file(&filename, &window_buffer, false).unwrap();
             } else {
                 self.write_data_to_file(&filename, &window_buffer, true).unwrap();
@@ -517,6 +517,7 @@ impl TBDClient {
                     return Err(e);
                 }
             };
+            write_state(&self.offset, &self.filename);
             return output.write_all(&data);
         } else {
             let mut output = match OpenOptions::new().write(true).append(true).create(true).open(&file) {
@@ -526,6 +527,7 @@ impl TBDClient {
                     return Err(e);
                 }
             };
+            write_state(&self.offset, &self.filename);
             return output.write_all(&data);
         }
     }
