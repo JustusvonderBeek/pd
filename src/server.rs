@@ -14,8 +14,8 @@ use crate::cmdline_handler::Options;
 use crate::packets::*;
 use crate::utils::*;
 
-const MAX_FLOW_WINDOW : u16 = 100;
-const DEFAULT_FLOW_WINDOW : u16 = 16;
+const MAX_FLOW_WINDOW : u16 = 50;
+const DEFAULT_FLOW_WINDOW : u16 = 8;
 const SLOW_START_THRESH : u16 = u16::MAX;
 
 pub struct TBDServer {
@@ -237,6 +237,7 @@ impl TBDServer {
                                 // Here server never will be too small
                                 connection.flow_window = connection.client_max_flow;
                                 connection.slow_start_next_block = connection.client_max_flow;
+                                connection.slow_start = false;
                                 debug!("Set - Max C Flow: {} SS next block: {} Flow Window: {}", connection.client_max_flow, connection.slow_start_next_block, connection.flow_window);
                             }
 
@@ -250,6 +251,7 @@ impl TBDServer {
                                 if connection.slow_start_next_block > connection.ssthresh{
                                     // If we exceed the slowstart threshold we reduce our window
                                     connection.slow_start_next_block = connection.ssthresh;
+                                    connection.slow_start = false;
                                 }
                                 flow_window = connection.slow_start_next_block;
                                 // debug!("We are in slow start increasing from {} to {}", connection.flow_window, connection.slow_start_next_block);
@@ -258,7 +260,7 @@ impl TBDServer {
                             }else {
                                 connection.slow_start_next_block += 1;
                                 flow_window = connection.slow_start_next_block;
-                                debug!("Set - SS next block: {} Flow Window: {}", connection.slow_start_next_block, flow_window);
+                                debug!("Set - Normal next block: {} Flow Window: {}", connection.slow_start_next_block, flow_window);
 
                             }
                             // If we exceed the servers limit we stop increasing
@@ -267,8 +269,7 @@ impl TBDServer {
                                 let new_flow = cmp::min(MAX_FLOW_WINDOW, connection.client_max_flow);
                                 flow_window = new_flow;
                                 connection.slow_start_next_block = new_flow;
-                                debug!("Set - SS next block: {} Flow Window: {}", connection.slow_start_next_block, flow_window);
-
+                                debug!("Set - Flow next block: {} Flow Window: {}", connection.slow_start_next_block, flow_window);
                             }
                             debug!("Setting flow window to {}", flow_window);
                             connection.flow_window = flow_window;
@@ -320,20 +321,22 @@ impl TBDServer {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "No state found"));
                 },
             };
-            debug!("Connection flow window is {}", connection.flow_window);
+            info!("Connection flow window is {} that of peer {}", connection.flow_window, connection.client_max_flow);
             let sid_list = self.create_new_sid(connection.file_size, connection.sent, connection.flow_window);
             _sid = sid_list;
             _sent = connection.sent;
             _flow_window = connection.flow_window;
 
             // After we can successfully satisfy the information request we also need to send a Metadata packet including the size of the next block
-            let new_block_size;
+            let mut new_block_size;
             if connection.slow_start {
                 // We are still in the slow_start phase and our window will double in size
                 new_block_size = cmp::min(_flow_window * 2, MAX_FLOW_WINDOW);
+                new_block_size = cmp::min(new_block_size, connection.client_max_flow);
             }else{
                 // Otherwise we follow an AIMD strategy so the next block in case of no losses is incremented by 1
                 new_block_size = cmp::min(_flow_window + 1, MAX_FLOW_WINDOW);
+                new_block_size = cmp::min(new_block_size, connection.client_max_flow);
             }
     
             let m_d = MetadataPacket::serialize(connection_id, &connection.block_id, &new_block_size);
