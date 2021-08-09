@@ -14,6 +14,7 @@ pub struct Options {
     pub p: f64,
     pub q: f64,
     pub filename: Vec<String>,
+    pub overwrite : bool,
     pub logfile: String,
 }
 
@@ -27,6 +28,7 @@ fn default_options() -> Options {
         p: 0.0,
         q: 0.0,
         filename: vec![],
+        overwrite : false,
         logfile: String::from("tbd.log"),
     };
     set
@@ -37,12 +39,13 @@ fn print_help() {
     println!("Usage (Server):");
     println!("rft [-s [<host>]] [-t <port>] [-p <p>] [-q <q>] [-l <logfile>]");
     println!("Usage (Client):");
-    println!("rft <host> [-t <port>] [-p <p>] [-q <q>] [-l <logfile>] <file> ...");
+    println!("rft <host> [-t <port>] [-p <p>] [-q <q>] [-o] [-l <logfile>] <file> ...");
     println!("Options:");
     println!("-s: servermode: accept incoming requests from any host. Operates in client mode if “–s” is not specified. Expected as first argument! Default address is 127.0.0.1.");
     println!("<host>: The address for the server to bind to (optional) or for the client to connect to. Default: 127.0.0.1");
     println!("-t: specify the port number of the server. Default server: 5001, Default client: >=6001");
     println!("-p, -q: specify the loss probabilities for the Markov chain model. If only one is specified, p=q is assumed; if neither is specified no loss is assumed.");
+    println!("-o: Overwrite any existing new file");
     println!("-l: Specify the path to the logfile. Default: tbd.log");
     println!("<file> the name(s) of the file(s) to fetch.");
 }
@@ -104,7 +107,10 @@ pub fn parse_cmdline(args : Vec<String>) -> Option<Options> {
                     let logfile = args.get(i + 1).expect("Expected a logfile but got nothing!");
                     settings.logfile = String::from(logfile);
                     i += 1;
-                }
+                },
+                "-o" => {
+                    settings.overwrite = true;
+                },
                 _ => {
                     if settings.server {
                         error!("Cannot transfer a file in server mode!");
