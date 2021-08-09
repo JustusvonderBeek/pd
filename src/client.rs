@@ -14,7 +14,9 @@ use crate::cmdline_handler::Options;
 use crate::packets::*;
 use crate::utils::*;
 
-const TIMEOUT_MS : f64 = 500.0;
+
+const TIMEOUT_MS : f64 = 1000.0;
+const INIT_TIMEOUT_MS : f64 = TIMEOUT_MS * 3.0;
 const START_FLOW_WINDOW : u16 = 16;
 const MAX_RETRANSMISSION : usize = 3;
 
@@ -59,12 +61,12 @@ impl TBDClient {
 
     fn client(&mut self) -> std::io::Result<()> {
         
-        info!("Staring the filerequest...");
+        info!("Starting the filerequest...");
         
         // Bind to any local IP address (let the system assign one)
         // Try to rebind 3 times, then stop
 
-        let sock = match bind_to_socket(&String::from(&self.options.hostname), &self.options.client_port, 3) {
+        let sock = match bind_to_socket(&String::from(&self.options.local_hostname), &self.options.client_port, 3) {
             Ok(s) => s,
             Err(e) => return Err(e),
         };
@@ -77,10 +79,20 @@ impl TBDClient {
         let filenames = self.options.filename.clone();
         
         for filename in filenames {
-            // TODO: Add the handling for the continued file request / resumption
+            
+            let offset = match read_state(&filename) {
+                Ok(o) => {
+                    info!("Continue download at offset: {}", o);
+                    o
+                },
+                Err(_) => {
+                    info!("Starting new download...");
+                    0
+                },
+            };
 
             // The initial flow window is set by the application implementation
-            let request = RequestPacket::serialize(&0, &self.flow_window, &filename);
+            let request = RequestPacket::serialize(&offset, &self.flow_window, &filename);
 
             // Sending the request to the server
             match sock.send_to(&request, &self.server) {
@@ -95,7 +107,7 @@ impl TBDClient {
             self.filename = String::from(&filename);
 
             // Receive response from server
-            let (packet, len, _) = match get_next_packet(&sock, 0.0) {
+            let (packet, len, _) = match get_next_packet(&sock, INIT_TIMEOUT_MS) {
                 Ok(r) => r,
                 Err(_) => return Err(io::Error::new(io::ErrorKind::ConnectionReset, "Did not receive an answer")),
             };
@@ -127,6 +139,7 @@ impl TBDClient {
 
                     // Storing the current file informations
                     self.connection_id = res.connection_id;
+                    self.offset = offset;
                     self.block_id = res.block_id;
                     self.file_hash = res.file_hash;
                     self.file_size = res.file_size;
@@ -154,14 +167,17 @@ impl TBDClient {
                 Err(_) => continue,
             };
 
-            if !compare_hashes(&self.file_hash.to_vec(), &hash.to_vec()) {
-                error!("The file is corrupted. Hashes do not match!");
-                // TODO: Retransfer the file?
-                
+            if !self.retransmission {
+                if !compare_hashes(&self.file_hash.to_vec(), &hash.to_vec()) {
+                    error!("The file is corrupted. Hashes do not match!");
+                    // TODO: Retransfer the file?
+                } else {
+                    info!("File hash is correct");
+                }
+                delete_state(&self.filename);
             } else {
-                info!("File hash is correct");
+                info!("Did not finish file transfer because retransmission failed.");
             }
-            
         }
 
         info!("Finished file transfer");
@@ -214,6 +230,8 @@ impl TBDClient {
 
     fn receive_data(&mut self, sock : &UdpSocket) {
         'outer: loop {
+            self.retransmission = false;
+            write_state(&self.offset, &self.filename);
             let (iterations, window_size) = self.compute_block_params();
             let sid = self.create_new_sid(iterations);
             let mut window_buffer = vec![0; window_size];
@@ -222,7 +240,7 @@ impl TBDClient {
                 Ok(_) => {
                     if self.received >= self.file_size {
                         info!("Received all packets!");
-                        break;
+                        return;
                     }
                     debug!("Finished block {}", self.block_id - 1);
                     continue;
@@ -235,7 +253,8 @@ impl TBDClient {
                     Ok(_) => {
                         if self.received >= self.file_size {
                             info!("Received all packets!");
-                            break 'outer;
+                            self.retransmission = false;
+                            return;
                         }
                         debug!("Finished block {}", self.block_id - 1);
                         break 'inner;
@@ -247,10 +266,9 @@ impl TBDClient {
                 };
                 list = new_list;
                 if i + 1 == MAX_RETRANSMISSION {
-                    return;
+                    break 'outer;
                 }
             }
-            self.retransmission = false;
         }
     }
 
