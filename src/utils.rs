@@ -1,6 +1,6 @@
 use std::{
     io::{self, Write},
-    fs::{self, OpenOptions},
+    fs::{self, OpenOptions, File},
     time::Duration, 
     convert::TryInto,
     net::{UdpSocket, SocketAddr},
@@ -197,6 +197,14 @@ pub fn read_state(filename : &String) -> io::Result<u64> {
     let mut filename = String::from(filename);
     filename.push_str(".part");
 
+    let file = match File::open(&filename) {
+        Ok(f) => f,
+        Err(_) => {
+            info!("No state information found");
+            return Err(io::Error::new(io::ErrorKind::NotFound, "Cannot read state"));
+        }
+    };
+    let len = file.metadata().unwrap().len();
     let file = match fs::read(&filename) {
         Ok(f) => f,
         Err(_) => {
@@ -205,7 +213,10 @@ pub fn read_state(filename : &String) -> io::Result<u64> {
         },
     };
     let (int_bytes, _) = file.split_at(std::mem::size_of::<u64>());
-    let offset = u64::from_be_bytes(int_bytes.try_into().unwrap());
+    let mut offset = u64::from_be_bytes(int_bytes.try_into().unwrap());
+    if len != offset {
+        offset = len;
+    }
     Ok(offset)
 }
 
