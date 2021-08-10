@@ -35,6 +35,7 @@ pub struct TBDClient {
     filename : String,
     retransmission : bool,
     slow_start : bool,
+    repair_mode : bool,
 }
 
 impl TBDClient {
@@ -53,6 +54,7 @@ impl TBDClient {
             filename : String::new(),
             retransmission : false,
             slow_start : true,
+            repair_mode : false,
         }
     }
 
@@ -218,7 +220,7 @@ impl TBDClient {
         
         // Only read in the min(window,remain)
         window_size = cmp::min(window_size, remain);
-        debug!("Remaining: {} Window buffer (before): {} and Window Buffer (after): {}", remain, (DATA_SIZE*self.flow_window as usize), window_size);
+        debug!("Remaining: {} received {} Window buffer (before): {} and Window Buffer (after): {}", remain, self.received, (DATA_SIZE*self.flow_window as usize), window_size);
 
         // Compute the iteration counter
         let mut iterations = self.flow_window; // default
@@ -417,11 +419,29 @@ impl TBDClient {
         if sid.len() != 0 {
             info!("Missing {} packets: {:?}", sid.len(), sid);
             // Sending the nack
+            let missing_len : u16;
             let mut vec : Vec<u16> = Vec::with_capacity(sid.len());
-            for seq in &sid {
-                vec.push(*seq);
+            if sid.len() > 610 {
+                debug!("Detected hard loss of {} entering repair mode for this block. Received so far {}", sid.len(), self.received);
+                missing_len = 0xffff;
+                self.received = self.offset;
+                warn!("After removing the received ones we have {} start was at {} flow_window {} lost {}", self.received, self.offset, self.flow_window, sid.len());
+                self.flow_window = ceil(self.flow_window as f64 / 2.0, 0) as u16;
+                self.repair_mode = true;
+                // An empty vector will be sent but we need to resize our sid
+                sid.clear();
+                for i in 1..self.flow_window + 1 {
+                    sid.push_back(i);   
+                }
+            }else{
+                missing_len = sid.len() as u16;
+                // need to add all SIDs to our list
+                for seq in &sid {
+                    vec.push(*seq);
+                }
             }
-            let nack = AckPacket::serialize(&self.connection_id, &self.block_id, &MAX_FLOW_WINDOW, &(sid.len() as u16), &vec);
+
+            let nack = AckPacket::serialize(&self.connection_id, &self.block_id, &MAX_FLOW_WINDOW, &missing_len, &vec);
             match sock.send_to(&nack, &self.server) {
                 Ok(_) => {},
                 Err(e) => {
@@ -433,8 +453,9 @@ impl TBDClient {
             return Err(sid);
         } else {
             let pre_offset = self.offset;
+            let slice_size = cmp::min(self.flow_window as usize * DATA_SIZE, window_buffer.len());
             self.offset += self.flow_window as u64 * DATA_SIZE as u64;
-            if self.retransmission {
+            if self.retransmission && !self.repair_mode {
                 // We did a retransmission
                 if self.slow_start {
                     self.flow_window = ceil(self.flow_window as f64 / 2.0, 0) as u16;
@@ -443,6 +464,9 @@ impl TBDClient {
                 }else{
                     self.flow_window = ceil(self.flow_window as f64 / 2.0, 0) as u16;
                 }
+            } else if self.retransmission && self.repair_mode {
+                // no more changes necessary already adapted flow_window
+                self.congestion_window = self.flow_window;
             } else {
                 self.flow_window = self.congestion_window;
             }
@@ -459,12 +483,14 @@ impl TBDClient {
 
             // Writing the current block in correct order into the file
             let filename = String::from(&self.filename);
-            if self.block_id > 1 || pre_offset > 0 {
-                self.write_data_to_file(&filename, &window_buffer, false).unwrap();
-            } else {
-                self.write_data_to_file(&filename, &window_buffer, true).unwrap();
+            if self.repair_mode{
+                self.repair_mode = false;
             }
-
+            if self.block_id > 1 || pre_offset > 0{
+                self.write_data_to_file(&filename, &window_buffer, false, slice_size).unwrap();
+            } else {
+                self.write_data_to_file(&filename, &window_buffer, true, slice_size).unwrap();
+            }
         }
         Ok(())
     }
@@ -505,7 +531,7 @@ impl TBDClient {
         p_size as u64
     }
 
-    fn write_data_to_file(&mut self, file: &String, data : &Vec<u8>, trunc : bool) -> std::io::Result<()> {
+    fn write_data_to_file(&mut self, file: &String, data : &Vec<u8>, trunc : bool, slice_size : usize) -> std::io::Result<()> {
         let mut file = String::from(file);
         file.push_str(".new");
         
@@ -518,7 +544,7 @@ impl TBDClient {
                 }
             };
             write_state(&self.offset, &self.filename);
-            return output.write_all(&data);
+            return output.write_all(&data[0..slice_size]);
         } else {
             let mut output = match OpenOptions::new().write(true).append(true).create(true).open(&file) {
                 Ok(f) => f,
@@ -528,7 +554,7 @@ impl TBDClient {
                 }
             };
             write_state(&self.offset, &self.filename);
-            return output.write_all(&data);
+            return output.write_all(&data[0..slice_size]);
         }
     }
 }
