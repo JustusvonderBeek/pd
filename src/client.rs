@@ -2,6 +2,8 @@ use std::{
     cmp,
     fs::OpenOptions,
     io,
+    thread,
+    time,
     io::Write,
     result::Result,
     collections::LinkedList,
@@ -80,113 +82,149 @@ impl TBDClient {
         
         // Otherwise we get an error
         let filenames = self.options.filename.clone();
-        
-        for filename in filenames {
-            
+
+        'outer: for filename in filenames {
+            self.filename = String::from(&filename);
+
+            // Checking once per file for state information
             let mut offset = 0;
+            let mut hash : Vec<u8> = Vec::new();
             if !self.options.overwrite {
-                offset = match read_state(&filename) {
+                let (off, h) = match read_state(&filename) {
                     Ok(o) => {
-                        info!("Continue download at offset: {}", o);
+                        info!("Found partly downloaded file: {}", o.0);
                         o
                     },
                     Err(_) => {
                         info!("Starting new download...");
-                        0
+                        (0, Vec::new())
                     },
                 };
+                offset = off;
+                hash = h;
             } else {
                 info!("Starting new download, overwriting any existing file...");
             }
 
-            // The initial flow window is set by the application implementation
-            let request = RequestPacket::serialize(&offset, &self.flow_window, &filename);
+            let mut req = true;
+            'inner: loop {
 
-            // Sending the request to the server
-            match sock.send_to(&request, &self.server) {
-                Ok(s) => debug!("Send {} bytes to {}", s, self.server),
-                Err(e) => {
-                    error!("Failed to send to {}: {}", self.server, e);
-                    // In case we fail we abort the sending because the socket is broken
-                    return Err(e);
-                }
-            };
-            info!("Requested file: {}", filename);
-            self.filename = String::from(&filename);
-
-            // Receive response from server
-            let (packet, len, _) = match get_next_packet(&sock, INIT_TIMEOUT_MS) {
-                Ok(r) => r,
-                Err(_) => return Err(io::Error::new(io::ErrorKind::ConnectionReset, "Did not receive an answer")),
-            };
-            // debug!("Received response from {}: {}", addr, pretty_hex(&packet_buffer));
-            
-            // Check for errors and correct packet
-            let packet_type = get_packet_type_client(&packet);
-            match packet_type {
-                PacketType::Error => {
-                    let err = match ErrorPacket::deserialize(&packet) {
-                        Ok(e) => e,
-                        Err(_) => {
-                            error!("Failed to deserialize the error packet!");
-                            // Because we need to close the connection (do not know what the server wants us to do)
-                            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid packet"));
-                        }
-                    };
-                    warn!("Connection {} received error: ErrorCode == {}", err.connection_id, err.error_code);
-                    continue;
-                },
-                PacketType::Response => {
-                    let res = match ResponsePacket::deserialize(&packet[0..len]) {
-                        Ok(r) => r,
+                if req {
+                    // The initial flow window is set by the application implementation
+                    let request = RequestPacket::serialize(&offset, &self.flow_window, &filename);
+        
+                    // Sending the request to the server
+                    match sock.send_to(&request, &self.server) {
+                        Ok(s) => debug!("Send {} bytes to {}", s, self.server),
                         Err(e) => {
-                            warn!("Failed to deserialize response packet: {}", e);
-                            continue;
+                            error!("Failed to send to {}: {}", self.server, e);
+                            // In case we fail we abort the sending because the socket is broken
+                            return Err(e);
                         }
                     };
-
-                    // Storing the current file informations
-                    self.connection_id = res.connection_id;
-                    self.offset = offset;
-                    self.received = offset;
-                    self.block_id = res.block_id;
-                    self.file_hash = res.file_hash;
-                    self.file_size = res.file_size;
-
-                    self.receive_data(&sock);        
-                },
-                PacketType::Data => {
-                    // TODO: Add handling
-                    error!("The handling for data packets before the response is currently not implemented!");
-                    continue;
-                },
-                _ => {
-
+                    info!("Requested file: {}", &filename);
+                    req = false;
                 }
-            }
-
-            let mut new_file = String::from(&filename);
-            new_file.push_str(".part");
-            let (file, _) = match get_file(&String::from(&new_file)) {
-                Ok(f) => f,
-                Err(_) => continue,
-            };
-            let hash = match compute_hash(&file) {
-                Ok(h) => h,
-                Err(_) => continue,
-            };
-
-            if !self.retransmission {
-                if !compare_hashes(&self.file_hash.to_vec(), &hash.to_vec()) {
-                    error!("The file is corrupted. Hashes do not match!");
+                
+                // Receive response from server
+                let (packet, len, _) = match get_next_packet(&sock, INIT_TIMEOUT_MS) {
+                    Ok(r) => r,
+                    Err(_) => return Err(io::Error::new(io::ErrorKind::ConnectionReset, "Did not receive an answer")),
+                };
+                // debug!("Received response from {}: {}", addr, pretty_hex(&packet_buffer));
+                
+                // Check for errors and correct packet
+                let packet_type = get_packet_type_client(&packet);
+                debug!("Packet Type: {:?}", packet_type);
+                match packet_type {
+                    PacketType::Error => {
+                        let err = match ErrorPacket::deserialize(&packet) {
+                            Ok(e) => e,
+                            Err(_) => {
+                                error!("Failed to deserialize the error packet!");
+                                // Because we need to close the connection (do not know what the server wants us to do)
+                                return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid packet"));
+                            }
+                        };
+                        warn!("Connection {} received error: ErrorCode == {}", err.connection_id, err.error_code);
+                        // Ignore
+                        continue;
+                    },
+                    PacketType::Response => {
+                        let res = match ResponsePacket::deserialize(&packet[0..len]) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                warn!("Failed to deserialize response packet: {}", e);
+                                // Next file...
+                                break 'inner;
+                            }
+                        };
+    
+                        // Check for different hash
+                        if hash.is_empty() {
+                            warn!("Downloading new file...");
+                        } else if !compare_hashes(&res.file_hash.to_vec(), &hash) {
+                            warn!("File hashes do not match! Beginning new transfer...");
+                            delete_state(&filename);
+                            delete_part(&filename);
+    
+                            req = true;
+                            offset = 0;
+                            hash = Vec::new();
+                            
+                            // Request the same file again...
+                            continue;
+                        } else {
+                            info!("File unchanged! Continue download...");
+                            self.offset = offset;
+                            self.received = offset;
+                        }
+                        
+                        // Storing the current file informations
+                        self.connection_id = res.connection_id;
+                        self.block_id = res.block_id;
+                        self.file_hash = res.file_hash;
+                        self.file_size = res.file_size;
+    
+                        write_full_state(&self.offset, Some(&mut res.file_hash.to_vec()), &filename);
+    
+                        self.receive_data(&sock);
+                    },
+                    PacketType::Data => {
+                        warn!("Ignore unrelated data packet!");
+                        continue;
+                    },
+                    _ => {
+                        continue;
+                    }
+                }
+    
+                let mut new_file = String::from(&filename);
+                new_file.push_str(".part");
+                let (file, _) = match get_file(&String::from(&new_file)) {
+                    Ok(f) => f,
+                    Err(_) => break 'inner,
+                };
+                hash = match compute_hash(&file) {
+                    Ok(h) => h.to_vec(),
+                    Err(_) => break 'inner,
+                };
+    
+                if !self.retransmission {
+                    if !compare_hashes(&self.file_hash.to_vec(), &hash) {
+                        error!("The file is corrupted. Hashes do not match!");
+                        delete_part(&filename);
+                    } else {
+                        info!("File hash is correct");
+                        // Move the file to .new
+                        rename_file(&String::from(&filename));
+                    }
+                    delete_state(&self.filename);
                 } else {
-                    info!("File hash is correct");
-                    // Move the file to .new
-                    rename_file(&String::from(&filename));
+                    info!("Did not finish file transfer because retransmission failed.");
                 }
-                delete_state(&self.filename);
-            } else {
-                info!("Did not finish file transfer because retransmission failed.");
+
+                break 'inner;
             }
         }
 
@@ -557,5 +595,10 @@ impl TBDClient {
             write_state(&self.offset, &self.filename);
             return output.write_all(&data[0..slice_size]);
         }
+    }
+
+    fn sleep_n_ms(&self, ms : u64) {
+        let duration = time::Duration::from_millis(ms);
+        thread::sleep(duration);
     }
 }
