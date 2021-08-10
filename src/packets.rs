@@ -183,6 +183,11 @@ impl AckPacket {
         buffer.push(fields);
         buffer.extend_from_slice(&block_id.to_be_bytes());
         buffer.extend_from_slice(&flow_window.to_be_bytes());
+        if sid_list.len() > 610 {
+            let len : u16 = 0xffff;
+            buffer.extend_from_slice(&len.to_be_bytes());
+            return buffer;
+        }
         buffer.extend_from_slice(&length.to_be_bytes());
         for x in sid_list {
             buffer.extend(&x.to_be_bytes());
@@ -200,6 +205,17 @@ impl AckPacket {
         }
         let mut sid_list : Vec<u16> = Vec::new();
         let ack_length : u16 = BigEndian::read_u16(&buffer[10..12]);
+        if ack_length == 0xffff{
+            // We dropped more than can fit in a single ACK packet
+            return Ok (AckPacket {
+                connection_id : u32::from_be_bytes(con_id),
+                fields : buffer [3],
+                block_id : BigEndian::read_u32(&buffer[4..8]),
+                flow_window : BigEndian::read_u16(&buffer[8..10]),
+                length : ack_length,
+                sid_list : sid_list,
+            });
+        }
         if (12 + (2*ack_length as usize)) > buffer.len(){
             debug!("Received a packet with differing size and length parameter buffer length without header {} was listed as length {}", buffer.len(), ack_length);
             println!("{:?}", buffer);
