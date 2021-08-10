@@ -174,26 +174,54 @@ pub fn send_error(sock : &UdpSocket, connection_id : &u32, addr : &SocketAddr, e
 }
 
 pub fn write_state(offset : &u64, filename : &String) {
+    write_full_state(offset, None, filename);
+}
+
+pub fn write_full_state(offset : &u64, hash : Option<&mut Vec<u8>>, filename : &String) {
     let mut file = String::from(filename);
     file.push_str(".info");
 
-    let mut output = match OpenOptions::new().write(true).truncate(true).create(true).open(&file) {
-        Ok(f) => f,
-        Err(e) => {
-            warn!("Failed to create state file {}: {}", file, e);
-            return;
-        }
-    };
+    let mut vec : Vec<u8> = Vec::new();
     let state = offset.to_be_bytes();
-    match output.write_all(&state) {
-        Ok(_) => {},
-        Err(e) => {
-            warn!("Failed to create state file {}, {}", file, e);
+    vec.append(&mut state.to_vec());
+    match hash {
+        Some(mut h) => {
+            // Got a hash - creating new state file
+            let mut output = match OpenOptions::new().write(true).append(false).truncate(true).create(true).open(&file) {
+                Ok(f) => f,
+                Err(e) => {
+                    warn!("Failed to create state file {}: {}", file, e);
+                    return;
+                }
+            };
+            vec.append(&mut h);
+            match output.write_all(&vec) {
+                Ok(_) => {},
+                Err(e) => {
+                    warn!("Failed to create state file {}, {}", file, e);
+                },
+            }
+        },
+        None => {
+            // Got no hash - overwriting first 8 bytes with new offset
+            let mut output = match OpenOptions::new().write(true).append(false).truncate(false).create(true).open(&file) {
+                Ok(f) => f,
+                Err(e) => {
+                    warn!("Failed to create state file {}: {}", file, e);
+                    return;
+                }
+            };
+            match output.write_all(&vec) {
+                Ok(_) => {},
+                Err(e) => {
+                    warn!("Failed to create state file {}, {}", file, e);
+                },
+            }
         },
     }
 }
 
-pub fn read_state(filename : &String) -> io::Result<u64> {
+pub fn read_state(filename : &String) -> io::Result<(u64, Vec<u8>)> {
     let mut info_file = String::from(filename);
     info_file.push_str(".info");
 
@@ -221,22 +249,31 @@ pub fn read_state(filename : &String) -> io::Result<u64> {
             return Err(io::Error::new(io::ErrorKind::NotFound, "Cannot read state"));
         },
     };
-    let (int_bytes, _) = file.split_at(std::mem::size_of::<u64>());
+    let (int_bytes, rest) = file.split_at(std::mem::size_of::<u64>());
     let mut offset = u64::from_be_bytes(int_bytes.try_into().unwrap());
-    warn!("State Information: File {} .Part {}", len, offset);
+    warn!("State Information: File {} .Part {} Hash len {}", len, offset, rest.len());
     if len != offset {
         offset = len;
     }
-    Ok(offset)
+    Ok((offset, rest.to_vec()))
 }
 
 pub fn delete_state(filename : &String) {
     let mut file = String::from(filename);
     file.push_str(".info");
-    
-    match fs::remove_file(file) {
-        Ok(_) => info!("Deleted state information for file {}", filename),
-        Err(e) => warn!("Failed to remove state for file {}: {}", filename, e),
+    delete_file(&file);
+}
+
+pub fn delete_part(filename : &String) {
+    let mut file = String::from(filename);
+    file.push_str(".part");
+    delete_file(&file);
+}
+
+pub fn delete_file(filename : &String) {
+    match fs::remove_file(filename) {
+        Ok(_) => info!("Deleted file {}", filename),
+        Err(e) => warn!("Failed to remove file {}: {}", filename, e),
     }
 }
 
