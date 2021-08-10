@@ -15,10 +15,10 @@ use crate::packets::*;
 use crate::utils::*;
 
 
-const TIMEOUT_MS : f64 = 1000.0;
+const TIMEOUT_MS : f64 = 200.0;
 const INIT_TIMEOUT_MS : f64 = TIMEOUT_MS * 3.0;
 const START_FLOW_WINDOW : u16 = 8;
-const MAX_FLOW_WINDOW : u16 = 40;
+const MAX_FLOW_WINDOW : u16 = 50;
 const MAX_RETRANSMISSION : usize = 3;
 
 pub struct TBDClient {
@@ -165,8 +165,8 @@ impl TBDClient {
                 }
             }
 
-            let mut new_file = String::from(filename);
-            new_file.push_str(".new");
+            let mut new_file = String::from(&filename);
+            new_file.push_str(".part");
             let (file, _) = match get_file(&String::from(&new_file)) {
                 Ok(f) => f,
                 Err(_) => continue,
@@ -179,9 +179,10 @@ impl TBDClient {
             if !self.retransmission {
                 if !compare_hashes(&self.file_hash.to_vec(), &hash.to_vec()) {
                     error!("The file is corrupted. Hashes do not match!");
-                    // TODO: Retransfer the file?
                 } else {
                     info!("File hash is correct");
+                    // Move the file to .new
+                    rename_file(&String::from(&filename));
                 }
                 delete_state(&self.filename);
             } else {
@@ -533,7 +534,7 @@ impl TBDClient {
 
     fn write_data_to_file(&mut self, file: &String, data : &Vec<u8>, trunc : bool, slice_size : usize) -> std::io::Result<()> {
         let mut file = String::from(file);
-        file.push_str(".new");
+        file.push_str(".part");
         
         if trunc {
             let mut output = match OpenOptions::new().write(true).truncate(true).create(true).open(&file) {

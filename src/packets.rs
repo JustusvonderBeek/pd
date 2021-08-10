@@ -273,7 +273,7 @@ impl MetadataPacket {
         }
         let con_id : [u8; 4] = [0, buffer[0], buffer[1], buffer[2]];
         let connection_id = u32::from_be_bytes(con_id);
-        if connection_id == 0{
+        if connection_id == 0 {
             debug!("Received a metadata packet with connection id of 0.");
             return Err("ConnectionID 0 is invalid for Metadata")
         }
@@ -331,17 +331,6 @@ impl ErrorPacket {
             error_code : BigEndian::read_u32(&buffer[8..12])
         })
     }
-}
-
-pub fn get_connection_id(packet : &Vec<u8>) -> Result<u32, ()> {
-    if packet.len() < 4 {
-        warn!("Packet is malformed. Length is too short");
-    } else {
-        let con_id : [u8; 4] = [0, packet[0], packet[1], packet[2]];
-        let connection_id = u32::from_be_bytes(con_id);
-        return Ok(connection_id);
-    }
-    return Err(());
 }
 
 pub fn get_packet_type_client(packet : &Vec<u8>) -> PacketType {

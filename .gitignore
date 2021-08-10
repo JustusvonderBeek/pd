@@ -6,3 +6,5 @@ MultiplePacketPadding.txt.new
 OnePacket.txt
 *.pdf
 *.pdf*
+*.new
+*.txt

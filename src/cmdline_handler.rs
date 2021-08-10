@@ -29,7 +29,7 @@ fn default_options() -> Options {
         q: 0.0,
         filename: vec![],
         overwrite : false,
-        logfile: String::from("tbd.log"),
+        logfile: String::from("tbd"),
     };
     set
 }
@@ -124,9 +124,14 @@ pub fn parse_cmdline(args : Vec<String>) -> Option<Options> {
         }
         
         if !settings.server {
+            
             let mut s = String::from(settings.logfile);
-            s.push_str(".client");
-            settings.logfile = String::from(&s);
+            s.push_str(".client.log");
+            settings.logfile = s;
+        } else {
+            let mut s = String::from(settings.logfile);
+            s.push_str(".server.log");
+            settings.logfile = s;
         }
 
         match pq {
