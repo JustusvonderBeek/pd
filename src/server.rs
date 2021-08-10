@@ -35,6 +35,7 @@ struct ConnectionStore {
     ssthresh : u16,
     slow_start : bool,
     client_max_flow : u16,
+    repair_mode : bool,
 }
 
 impl TBDServer {
@@ -182,8 +183,30 @@ impl TBDServer {
 
                     if ack.length > 0 {
                         // Retransmission
-                        
-                        match self.handle_retransmission(&sock, &ack.sid_list, &connection_id) {
+                        let mut connection = match self.states.get_mut(&ack.connection_id) {
+                            Some(s) => s,
+                            None => {
+                                error!("Connection with ID {} does not exists", ack.connection_id);
+                                continue;
+                            }
+                        };
+                        let mut new_sid_list;
+                        if ack.length == 0xffff{
+                            warn!("Entering repair mode with slow start window {} and flow window {}", connection.slow_start_next_block, connection.flow_window);
+                            connection.flow_window = ceil((connection.flow_window as f64) / 2.0, 0) as u16;
+                            connection.slow_start_next_block = connection.flow_window;
+                            let new_block_size = connection.flow_window;
+                            // keep in mind that we already halfed our congestion window and don't need to update after this
+                            connection.repair_mode = true;
+                            new_sid_list = Vec::new();
+                            // TODO: Should we resend the metadata packet as well?
+                            for i in 1..new_block_size + 1{
+                                new_sid_list.push(i);
+                            }
+                        }else{
+                            new_sid_list = ack.sid_list;
+                        }
+                        match self.handle_retransmission(&sock, &new_sid_list, &connection_id) {
                             Ok(_) => {},
                             Err(_) => {
                                 warn!("Failed the retransmission");
@@ -210,6 +233,7 @@ impl TBDServer {
                         // Check if the file transfer is complete and the state can be deleted
                         // Over approximation (but if it is too much this should still be fine)
                         let mut sent = (DATA_SIZE * connection.flow_window as usize) as u64; 
+                        warn!("Setting sent to {} assuming flow window of {}", sent, connection.flow_window);
                         
                         if connection.sent + sent >= connection.file_size {
                             info!("File {} successfully transferred! Removing state...", connection.file);
@@ -218,7 +242,7 @@ impl TBDServer {
                         }
                         connection.client_max_flow = ack.flow_window;
                         
-                        if connection.retransmission {
+                        if connection.retransmission && !connection.repair_mode{
 
                             // Cut the window in half regardless of the client
                             if connection.slow_start {
@@ -242,7 +266,7 @@ impl TBDServer {
                             }
 
                             connection.retransmission = false;
-                        } else {
+                        } else if !connection.repair_mode {
 
                             // Cap the maximal flow window
                             let mut flow_window;
@@ -273,6 +297,11 @@ impl TBDServer {
                             }
                             debug!("Setting flow window to {}", flow_window);
                             connection.flow_window = flow_window;
+                        } else {
+                            // No resizing required anymore if we went into repair mode
+                            error!("resetting repair mode !");
+                            connection.repair_mode = false;
+                            connection.slow_start = false;
                         }
                         
                         sent = connection.sent + sent;
@@ -505,6 +534,7 @@ impl TBDServer {
             ssthresh : SLOW_START_THRESH,
             slow_start : true,
             client_max_flow : u16::MAX,
+            repair_mode : false,
         };
         self.states.insert(connection_id, state);
     }
