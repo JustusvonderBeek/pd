@@ -228,7 +228,7 @@ impl TBDServer {
                                 debug!("Set - Max C Flow: {} Slow start: {} SS next block: {} Flow Window: {}", connection.client_max_flow, connection.slow_start, connection.slow_start_next_block, connection.flow_window);
                             } else {
                                 // TODO: Original assumption was + 1 from the client perspective
-                                connection.slow_start_next_block = ceil((connection.slow_start_next_block + 1) as f64 / 2.0, 0) as u16;
+                                connection.slow_start_next_block = ceil(connection.slow_start_next_block as f64 / 2.0, 0) as u16;
                                 connection.flow_window = connection.slow_start_next_block;
                                 debug!("Set - Max C Flow: {} SS next block: {} Flow Window: {}", connection.client_max_flow, connection.slow_start_next_block, connection.flow_window);
                             }
