@@ -175,7 +175,7 @@ pub fn send_error(sock : &UdpSocket, connection_id : &u32, addr : &SocketAddr, e
 
 pub fn write_state(offset : &u64, filename : &String) {
     let mut file = String::from(filename);
-    file.push_str(".part");
+    file.push_str(".info");
 
     let mut output = match OpenOptions::new().write(true).truncate(true).create(true).open(&file) {
         Ok(f) => f,
@@ -194,18 +194,27 @@ pub fn write_state(offset : &u64, filename : &String) {
 }
 
 pub fn read_state(filename : &String) -> io::Result<u64> {
-    let mut filename = String::from(filename);
-    filename.push_str(".part");
+    let mut info_file = String::from(filename);
+    info_file.push_str(".info");
 
-    let file = match File::open(&filename) {
+    let mut part_file = String::from(filename);
+    part_file.push_str(".part");
+
+    // Opening the partially downloaded file
+    let file = match File::open(&part_file) {
         Ok(f) => f,
         Err(_) => {
             info!("No state information found");
             return Err(io::Error::new(io::ErrorKind::NotFound, "Cannot read state"));
         }
     };
-    let len = file.metadata().unwrap().len();
-    let file = match fs::read(&filename) {
+    let len = match file.metadata() {
+        Ok(m) => m.len(),
+        Err(_) => 0,
+    };
+
+    // Opening our file information
+    let file = match fs::read(&info_file) {
         Ok(f) => f,
         Err(_) => {
             info!("No state information found");
@@ -214,6 +223,7 @@ pub fn read_state(filename : &String) -> io::Result<u64> {
     };
     let (int_bytes, _) = file.split_at(std::mem::size_of::<u64>());
     let mut offset = u64::from_be_bytes(int_bytes.try_into().unwrap());
+    warn!("State Information: File {} .Part {}", len, offset);
     if len != offset {
         offset = len;
     }
@@ -222,10 +232,22 @@ pub fn read_state(filename : &String) -> io::Result<u64> {
 
 pub fn delete_state(filename : &String) {
     let mut file = String::from(filename);
-    file.push_str(".part");
+    file.push_str(".info");
     
     match fs::remove_file(file) {
         Ok(_) => info!("Deleted state information for file {}", filename),
         Err(e) => warn!("Failed to remove state for file {}: {}", filename, e),
+    }
+}
+
+pub fn rename_file(filename : &String) {
+    let mut new_file = String::from(filename);
+    new_file.push_str(".new");
+
+    let mut old_file = String::from(filename);
+    old_file.push_str(".part");
+
+    match fs::rename(old_file, new_file) {
+        _ => {},
     }
 }
