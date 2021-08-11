@@ -349,7 +349,7 @@ impl TBDClient {
                         info!("Connection timed out! Starting retransmission...");
                         let up = socket_up(sock);
                         if !up {
-                            warn!("Socket is down! Rebinding an retrying");
+                            warn!("Socket is down! Rebinding...");
                             let ip = get_ip();
                             *sock = match bind_to_socket(&ip, &self.options.client_port, 0) {
                                 Ok(s) => s,
@@ -366,8 +366,16 @@ impl TBDClient {
                         // Testing if socket is down
                         let up = socket_up(sock);
                         if !up {
-                            warn!("Socket is down! Rebinding an retrying");
-
+                            warn!("Socket is down! Rebinding...");
+                            let ip = get_ip();
+                            *sock = match bind_to_socket(&ip, &self.options.client_port, 0) {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    warn!("Failed to rebind socket: {}", e);
+                                    break 'outer;
+                                },
+                            };
+                            warn!("Bound to new addr: {:?}", sock.local_addr());
                         }
                         return Err(sid);
                     },
@@ -521,9 +529,6 @@ impl TBDClient {
                             },
                         };
                         warn!("Bound to new addr: {:?}", sock.local_addr());
-                    } else {
-                        error!("Exiting client...");
-                        std::process::exit(1);
                     }
                 }
             }
