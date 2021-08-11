@@ -17,7 +17,7 @@ use crate::packets::*;
 use crate::utils::*;
 
 
-const TIMEOUT_MS : f64 = 200.0;
+const TIMEOUT_MS : f64 = 1000.0;
 const INIT_TIMEOUT_MS : f64 = TIMEOUT_MS * 3.0;
 const START_FLOW_WINDOW : u16 = 8;
 const MAX_FLOW_WINDOW : u16 = 50;
@@ -134,7 +134,7 @@ impl TBDClient {
                 // debug!("Received response from {}: {}", addr, pretty_hex(&packet_buffer));
                 
                 // Check for errors and correct packet
-                let packet_type = get_packet_type_client(&packet);
+                let packet_type = get_packet_type_client(&packet, false);
                 debug!("Packet Type: {:?}", packet_type);
                 match packet_type {
                     PacketType::Error => {
@@ -351,7 +351,7 @@ impl TBDClient {
                     },
                 };
 
-                let packet_type = get_packet_type_client(&packet[0..len].to_vec());
+                let packet_type = get_packet_type_client(&packet[0..len].to_vec(), true);
                 match packet_type {
                     PacketType::Error => {
                         let err = match ErrorPacket::deserialize(&packet[0..len]) {
@@ -449,6 +449,7 @@ impl TBDClient {
                     }
                     _ => {
                         error!("Expected data packet but got something else!");
+                        debug!("{:?} and len {} {:?}", packet, len, packet_type);
                         continue;
                     },
                 };
