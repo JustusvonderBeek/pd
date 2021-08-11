@@ -34,7 +34,7 @@ fn main() -> std::io::Result<()> {
 fn init_logger(opt : &Options) {
     CombinedLogger::init(
         vec![
-            TermLogger::new(LevelFilter::Debug, Config::default(), TerminalMode::Mixed, ColorChoice::Auto),
+            TermLogger::new(LevelFilter::Info, Config::default(), TerminalMode::Mixed, ColorChoice::Auto),
             WriteLogger::new(LevelFilter::Debug, Config::default(), File::create(opt.logfile.to_string()).unwrap()),
         ]
     ).unwrap();
