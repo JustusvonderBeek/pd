@@ -336,7 +336,7 @@ impl ErrorPacket {
     }
 }
 
-pub fn get_packet_type_client(packet : &[u8], connection_accepted : bool) -> PacketType {
+pub fn get_packet_type_client(packet : &[u8]) -> PacketType {
     if packet.len() < 10{
         return PacketType::None;
     }

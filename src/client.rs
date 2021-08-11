@@ -137,7 +137,7 @@ impl TBDClient {
                 // debug!("Received response from {}: {}", addr, pretty_hex(&packet_buffer));
                 
                 // Check for errors and correct packet
-                let packet_type = get_packet_type_client(&packet[0..len], false);
+                let packet_type = get_packet_type_client(&packet[0..len]);
                 debug!("Packet Type: {:?}", packet_type);
                 match packet_type {
                     PacketType::Error => {
@@ -383,7 +383,7 @@ impl TBDClient {
                     },
                 };
 
-                let packet_type = get_packet_type_client(&packet[0..len].to_vec(), true);
+                let packet_type = get_packet_type_client(&packet[0..len].to_vec());
                 match packet_type {
                     PacketType::Error => {
                         let err = match ErrorPacket::deserialize(&packet[0..len]) {
