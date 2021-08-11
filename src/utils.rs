@@ -280,7 +280,7 @@ pub fn delete_file(filename : &String) {
 
 pub fn rename_file(filename : &String) {
     let mut new_file = String::from(filename);
-    new_file.push_str(".new");
+    // new_file.push_str("");
 
     let mut old_file = String::from(filename);
     old_file.push_str(".part");
