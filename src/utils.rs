@@ -3,7 +3,7 @@ use std::{
     fs::{self, OpenOptions, File},
     time::Duration, 
     convert::TryInto,
-    net::{UdpSocket, SocketAddr},
+    net::{UdpSocket, SocketAddr, SocketAddrV6},
 };
 use pretty_hex::*;
 use sha2::{Sha256, Digest};
@@ -316,6 +316,13 @@ pub fn get_ip() -> String {
             return String::from("127.0.0.1");
         },
     };
-    let ip = interface.ips[0].ip();
-    ip.to_string()
+
+    let mut l_ip = interface.ips[0].ip();
+    for ip in &interface.ips {
+        if ip.is_ipv4() {
+            l_ip = ip.ip();
+            break;
+        }
+    }
+    l_ip.to_string()
 }
