@@ -469,7 +469,7 @@ impl TBDServer {
 
         for seq in sid {
 
-            let mut next_p : Vec<u8>;
+            let next_p : Vec<u8>;
             if *seq <= 0 {
                 let mut new_block_size;
                 if connection.slow_start {
