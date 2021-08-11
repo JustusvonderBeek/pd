@@ -83,7 +83,7 @@ impl TBDClient {
         // Otherwise we get an error
         let filenames = self.options.filename.clone();
 
-        'outer: for filename in filenames {
+        for filename in filenames {
 
             // Resetting the vars
             self.reset_client();
@@ -141,7 +141,7 @@ impl TBDClient {
                 debug!("Packet Type: {:?}", packet_type);
                 match packet_type {
                     PacketType::Error => {
-                        let err = match ErrorPacket::deserialize(&packet) {
+                        let err = match ErrorPacket::deserialize(&packet[0..len]) {
                             Ok(e) => e,
                             Err(_) => {
                                 error!("Failed to deserialize the error packet!");
@@ -350,6 +350,9 @@ impl TBDClient {
                         break 'outer;
                     },
                     Err(_) => { 
+                        // Testing if socket is down
+                        let up = socket_up(sock);
+                        error!("Socket is: {}", up);
                         return Err(sid);
                     },
                 };
