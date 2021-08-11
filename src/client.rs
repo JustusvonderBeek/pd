@@ -427,7 +427,7 @@ impl TBDClient {
                             
                             if !acked {
                                 let sid = Vec::new();
-                                let ack = AckPacket::serialize(&self.connection_id, &self.block_id, &MAX_FLOW_WINDOW, &0, &sid);
+                                let ack = AckPacket::serialize(&self.connection_id, &(self.block_id-1), &MAX_FLOW_WINDOW, &0, &sid);
                                 debug!("Created ACK: {}", pretty_hex(&ack));
                                 send_data(&ack, &sock, &self.server);
                                 acked = true;
@@ -522,7 +522,7 @@ impl TBDClient {
                 }
             }
 
-            let nack = AckPacket::serialize(&self.connection_id, &self.block_id, &MAX_FLOW_WINDOW, &missing_len, &vec);
+            let nack = AckPacket::serialize(&self.connection_id, &(self.block_id-1), &MAX_FLOW_WINDOW, &missing_len, &vec);
             match sock.send_to(&nack, &self.server) {
                 Ok(_) => {},
                 Err(e) => {
@@ -569,7 +569,7 @@ impl TBDClient {
             
             // Sending the acknowledgment
             let sid = Vec::new();
-            let ack = AckPacket::serialize(&self.connection_id, &self.block_id, &MAX_FLOW_WINDOW, &0, &sid);
+            let ack = AckPacket::serialize(&self.connection_id, &(self.block_id-1), &MAX_FLOW_WINDOW, &0, &sid);
             debug!("Created ACK: {}", pretty_hex(&ack));
             send_data(&ack, &sock, &self.server);
             
