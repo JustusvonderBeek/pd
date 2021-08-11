@@ -129,9 +129,6 @@ pub fn compare_hashes(org : &Vec<u8>, new : &Vec<u8>) -> bool {
 }
 
 pub fn create_next_packet(remain : &usize, window_buffer : &Vec<u8>, seq : &usize) -> io::Result<(Vec<u8>, usize)> {
-    // Including space for header
-    let mut packet = vec![0; DATA_SIZE];
-
     // Computing the slice we need to read out of the window buffer
     let start = seq * DATA_SIZE;
     let mut end = start + DATA_SIZE;
@@ -148,6 +145,9 @@ pub fn create_next_packet(remain : &usize, window_buffer : &Vec<u8>, seq : &usiz
         error!("The copying would create an out of bounds error! Computed {} but the buffer is only {} bytes long", end, window_buffer.len());
         return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid size"));
     }
+    // Including space for header
+    let mut packet = vec![0; size];
+
     packet[0..size].copy_from_slice(&window_buffer[start..end]);
     Ok((packet.to_vec(), size))
 }
