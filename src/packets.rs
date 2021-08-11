@@ -344,7 +344,7 @@ pub fn get_packet_type_client(packet : &Vec<u8>, connection_accepted : bool) -> 
     match fields as u8 {
         0b01000000 => return PacketType::Error,
         0b10000000 => {
-            if connection_accepted{
+            if connection_accepted || packet.len() == 12 {
                 return PacketType::Metadata;
             }
             return PacketType::Response;
