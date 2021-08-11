@@ -1,7 +1,14 @@
 extern crate pnet;
-
+use std::net::{
+    IpAddr,
+    Ipv4Addr,
+    Ipv6Addr,
+};
 use dns_lookup::lookup_host;
-use pnet::datalink;
+use pnet::{
+    datalink,
+    ipnetwork::IpNetwork,
+};
 
 /* The commandline options */
 #[derive(Clone)]
@@ -170,8 +177,39 @@ fn resolve_hostname(settings : &mut Options) {
                 return;
             },
         };
-        let ip = interface.ips[0].ip();
-        settings.local_hostname.push_str(&ip.to_string());
+
+        let mut ipv4 = true;
+        match settings.hostname.parse::<Ipv4Addr>() {
+            Ok(_) => {},
+            Err(_) => {
+                ipv4 = false;
+                match settings.hostname.parse::<Ipv6Addr>() {
+                    Ok(_) => {},
+                    Err(_) => {
+                        println!("Given hostname {} is not vaild IP", settings.hostname);
+                        settings.local_hostname = String::from("127.0.0.1");
+                        return;
+                    },
+                }
+            },
+        };
+        if ipv4 {
+            for ip in &interface.ips {
+                if ip.is_ipv4() {
+                    settings.local_hostname.push_str(&ip.ip().to_string());
+                    break;
+                }
+            }
+        } else {
+            for ip in &interface.ips {
+                if ip.is_ipv6() {
+                    settings.local_hostname.push_str("[");
+                    settings.local_hostname.push_str(&ip.ip().to_string());
+                    settings.local_hostname.push_str("]");
+                    break;
+                }
+            }
+        }
         // println!("Found IP: {}", settings.local_hostname);
     }
 }
