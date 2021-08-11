@@ -508,8 +508,23 @@ impl TBDClient {
                 Ok(_) => {},
                 Err(e) => {
                     error!("Failed to send NACK to server: {}", e);
-                    error!("Exiting client...");
-                    std::process::exit(1);
+                    let up = socket_up(sock);
+                    if !up {
+                        warn!("Socket is down! Rebinding an retrying");
+                        let ip = get_ip();
+                        *sock = match bind_to_socket(&ip, &self.options.client_port, 0) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                warn!("Failed to rebind socket: {}", e);
+                                error!("Exiting client...");
+                                std::process::exit(1);
+                            },
+                        };
+                        warn!("Bound to new addr: {:?}", sock.local_addr());
+                    } else {
+                        error!("Exiting client...");
+                        std::process::exit(1);
+                    }
                 }
             }
             return Err(sid);
