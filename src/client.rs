@@ -336,6 +336,7 @@ impl TBDClient {
         let mut loss = false;
         let mut loss_prob;
         let mut engine = rand::thread_rng();
+        let mut acked = false;
 
         // Loop until we received i data packets
         'outer: for seq in &list {
@@ -423,6 +424,15 @@ impl TBDClient {
     
                         if data.block_id != self.block_id {
                             warn!("Block IDs do not match. Expected {} got {}", self.block_id, data.block_id);
+                            
+                            if !acked {
+                                let sid = Vec::new();
+                                let ack = AckPacket::serialize(&self.connection_id, &self.block_id, &MAX_FLOW_WINDOW, &0, &sid);
+                                debug!("Created ACK: {}", pretty_hex(&ack));
+                                send_data(&ack, &sock, &self.server);
+                                acked = true;
+                            }
+
                             // Ignore
                             continue;
                         }
