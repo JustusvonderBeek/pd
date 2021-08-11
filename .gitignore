@@ -8,3 +8,4 @@ OnePacket.txt
 *.pdf*
 *.new
 *.txt
+.vscode/settings.json
