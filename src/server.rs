@@ -350,6 +350,7 @@ impl TBDServer {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "No state found"));
                 },
             };
+
             info!("Connection flow window is {} that of peer {}", connection.flow_window, connection.client_max_flow);
             let sid_list = self.create_new_sid(connection.file_size, connection.sent, connection.flow_window);
             _sid = sid_list;
@@ -378,6 +379,7 @@ impl TBDServer {
             }
             new_block_size = cmp::min(new_block_size, still_to_send);
             let m_d = MetadataPacket::serialize(connection_id, &connection.block_id, &new_block_size);
+
             match sock.send_to(&m_d, connection.endpoint) {
                 Ok(s) => {
                     debug!("Sent {} bytes of metadata package to {}", s, connection.endpoint); 
@@ -467,39 +469,57 @@ impl TBDServer {
 
         for seq in sid {
 
-            // Probability for next packet loss
-            if loss {
-                loss_prob = self.options.q;
-            } else {
-                loss_prob = self.options.p;
-            }
-
-            if engine.gen_bool(loss_prob) {
-                debug!("Skipping seq id {}", seq);
-                loss = true;
-                continue;
-            }
-
-            loss = false;
-
-            // Computing the parameter for the current packet
-            let mut size = DATA_SIZE;
-            let offset = file_offset + ((seq - 1) as u64 * DATA_SIZE as u64);
-            if connection.file_size < file_offset + (*seq as u64 * DATA_SIZE as u64) {
-                size = connection.file_size as usize - offset as usize;
-            }
-
-            // Reading the data out of the current window
-            let (packet, _) = match create_next_packet(&size, &window_buffer, &((*seq - 1) as usize)) {
-                Ok(p) => p,
-                Err(_) => {
-                    send_error(&sock, connection_id, &connection.endpoint, ErrorTypes::Abort);
-                    return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block"));
+            let mut next_p : Vec<u8>;
+            if *seq <= 0 {
+                let mut new_block_size;
+                if connection.slow_start {
+                    // We are still in the slow_start phase and our window will double in size
+                    new_block_size = cmp::min(flow_window * 2, MAX_FLOW_WINDOW);
+                    new_block_size = cmp::min(new_block_size, connection.client_max_flow);
+                } else {
+                    // Otherwise we follow an AIMD strategy so the next block in case of no losses is incremented by 1
+                    new_block_size = cmp::min(flow_window + 1, MAX_FLOW_WINDOW);
+                    new_block_size = cmp::min(new_block_size, connection.client_max_flow);
                 }
-            };
+                let still_to_send = ceil((connection.sent + window_size as u64) as f64 / DATA_SIZE as f64, 0) as u16;
+                new_block_size = cmp::min(new_block_size, still_to_send);
+                next_p = MetadataPacket::serialize(connection_id, &connection.block_id, &new_block_size);
+            } else {
+                // Probability for next packet loss
+                if loss {
+                    loss_prob = self.options.q;
+                } else {
+                    loss_prob = self.options.p;
+                }
+    
+                if engine.gen_bool(loss_prob) {
+                    debug!("Skipping seq id {}", seq);
+                    loss = true;
+                    continue;
+                }
+    
+                loss = false;
+    
+                // Computing the parameter for the current packet
+                let mut size = DATA_SIZE;
+                let offset = file_offset + ((seq - 1) as u64 * DATA_SIZE as u64);
+                if connection.file_size < file_offset + (*seq as u64 * DATA_SIZE as u64) {
+                    size = connection.file_size as usize - offset as usize;
+                }
+    
+                // Reading the data out of the current window
+                let (packet, _) = match create_next_packet(&size, &window_buffer, &((*seq - 1) as usize)) {
+                    Ok(p) => p,
+                    Err(_) => {
+                        send_error(&sock, connection_id, &connection.endpoint, ErrorTypes::Abort);
+                        return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to send next block"));
+                    }
+                };
+    
+                next_p = DataPacket::serialize(connection_id, &connection.block_id, &(seq), &packet);
+            }
 
-            let data = DataPacket::serialize(connection_id, &connection.block_id, &(seq), &packet);
-            match sock.send_to(&data, connection.endpoint) {
+            match sock.send_to(&next_p, connection.endpoint) {
                 Ok(s) => {
                     debug!("Sent {} bytes to {}", s, connection.endpoint); 
                     s
