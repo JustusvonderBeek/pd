@@ -324,7 +324,7 @@ impl TBDClient {
     }
 
     fn receive(&mut self, sock : &mut UdpSocket, window_buffer : &mut Vec<u8>, list : LinkedList<u16>) -> Result<(), LinkedList<u16>> {
-        info!("Starting file transmission...");
+        info!("Receiving block {}", self.block_id);
 
         // Prepare working vars
         let mut sid = list.clone();
@@ -480,7 +480,7 @@ impl TBDClient {
                             // Ignore
                             continue;
                         }
-                        warn!("New block_size for next round is expected to be {}", metadata.new_block_size);
+                        debug!("New block_size for next round is expected to be {}", metadata.new_block_size);
 
                         // Updating the congestion window
                         self.congestion_window = metadata.new_block_size;
