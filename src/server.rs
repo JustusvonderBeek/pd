@@ -200,7 +200,7 @@ impl TBDServer {
                             connection.repair_mode = true;
                             new_sid_list = Vec::new();
                             // TODO: Should we resend the metadata packet as well?
-                            for i in 1..new_block_size + 1{
+                            for i in 1..new_block_size + 1 {
                                 new_sid_list.push(i);
                             }
                         }else{
@@ -359,7 +359,7 @@ impl TBDServer {
             // After we can successfully satisfy the information request we also need to send a Metadata packet including the size of the next block
             let mut new_block_size;
             // Get how many bytes will be sent after this round
-            let mut full_send = (((_sid.len() * DATA_SIZE) as u64) +(connection.sent));
+            let mut full_send = ((_sid.len() * DATA_SIZE) as u64) + (connection.sent);
             if full_send >= connection.file_size{
                 full_send = connection.file_size;
             }
