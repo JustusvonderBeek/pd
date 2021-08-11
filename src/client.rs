@@ -71,7 +71,7 @@ impl TBDClient {
         // Bind to any local IP address (let the system assign one)
         // Try to rebind 3 times, then stop
 
-        let mut sock = match bind_to_socket(&String::from(&self.options.local_hostname), &self.options.client_port, 3) {
+        let mut sock = match bind_to_socket(&self.options.local_hostname, &self.options.client_port, 3) {
             Ok(s) => s,
             Err(e) => return Err(e),
         };
@@ -204,18 +204,17 @@ impl TBDClient {
                     }
                 }
     
-                let mut new_file = String::from(&filename);
-                new_file.push_str(".part");
-                let (file, _) = match get_file(&String::from(&new_file)) {
-                    Ok(f) => f,
-                    Err(_) => break 'inner,
-                };
-                hash = match compute_hash(&file) {
-                    Ok(h) => h.to_vec(),
-                    Err(_) => break 'inner,
-                };
-    
                 if !self.retransmission {
+                    let mut new_file = String::from(&filename);
+                    new_file.push_str(".part");
+                    let (file, _) = match get_file(&String::from(&new_file)) {
+                        Ok(f) => f,
+                        Err(_) => break 'inner,
+                    };
+                    hash = match compute_hash(&file) {
+                        Ok(h) => h.to_vec(),
+                        Err(_) => break 'inner,
+                    };
                     if !compare_hashes(&self.file_hash.to_vec(), &hash) {
                         error!("The file is corrupted. Hashes do not match!");
                         delete_part(&filename);
