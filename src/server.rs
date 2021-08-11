@@ -358,6 +358,15 @@ impl TBDServer {
 
             // After we can successfully satisfy the information request we also need to send a Metadata packet including the size of the next block
             let mut new_block_size;
+            // Get how many bytes will be sent after this round
+            let mut full_send = (((_sid.len() * DATA_SIZE) as u64) +(connection.sent));
+            if full_send >= connection.file_size{
+                full_send = connection.file_size;
+            }
+            let sent_after_this_round = connection.file_size - full_send;
+            // Get how many packets are left
+            let still_to_send = ceil(sent_after_this_round as f64 / DATA_SIZE as f64, 0) as u16;
+            debug!("Sent after {:x} still to do {}", sent_after_this_round, still_to_send);
             if connection.slow_start {
                 // We are still in the slow_start phase and our window will double in size
                 new_block_size = cmp::min(_flow_window * 2, MAX_FLOW_WINDOW);
@@ -367,7 +376,7 @@ impl TBDServer {
                 new_block_size = cmp::min(_flow_window + 1, MAX_FLOW_WINDOW);
                 new_block_size = cmp::min(new_block_size, connection.client_max_flow);
             }
-    
+            new_block_size = cmp::min(new_block_size, still_to_send);
             let m_d = MetadataPacket::serialize(connection_id, &connection.block_id, &new_block_size);
             match sock.send_to(&m_d, connection.endpoint) {
                 Ok(s) => {
