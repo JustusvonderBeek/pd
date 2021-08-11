@@ -233,7 +233,7 @@ impl TBDServer {
                         // Check if the file transfer is complete and the state can be deleted
                         // Over approximation (but if it is too much this should still be fine)
                         let mut sent = (DATA_SIZE * connection.flow_window as usize) as u64; 
-                        warn!("Setting sent to {} assuming flow window of {}", sent, connection.flow_window);
+                        debug!("Setting sent to {} assuming flow window of {}", sent, connection.flow_window);
                         
                         if connection.sent + sent >= connection.file_size {
                             info!("File {} successfully transferred! Removing state...", connection.file);
@@ -351,7 +351,7 @@ impl TBDServer {
                 },
             };
 
-            info!("Connection flow window is {} that of peer {}", connection.flow_window, connection.client_max_flow);
+            debug!("Connection flow window is {} that of peer {}", connection.flow_window, connection.client_max_flow);
             let sid_list = self.create_new_sid(connection.file_size, connection.sent, connection.flow_window);
             _sid = sid_list;
             _sent = connection.sent;
