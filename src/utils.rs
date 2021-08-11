@@ -7,6 +7,7 @@ use std::{
 };
 use pretty_hex::*;
 use sha2::{Sha256, Digest};
+use pnet::datalink;
 use crate::packets::*;
 
 pub const PACKET_SIZE : usize = 1280;
@@ -287,4 +288,34 @@ pub fn rename_file(filename : &String) {
     match fs::rename(old_file, new_file) {
         _ => {},
     }
+}
+
+pub fn socket_up(sock : &UdpSocket) -> bool {
+    let interfaces = datalink::interfaces();
+    let local_ip = match sock.local_addr() {
+        Ok(i) => i.ip(),
+        Err(_) => return false,
+    };
+
+    for i in interfaces {
+        for ip in &i.ips {
+            if local_ip == ip.ip() {
+                return i.is_up();
+            }
+        }
+    }
+    false
+}
+
+pub fn get_ip() -> String {
+    let interfaces = datalink::interfaces();
+    let interface = interfaces.iter().find(|i| i.is_up() && !i.is_loopback() && !i.ips.is_empty());
+    let interface = match interface {
+        Some(i) => i,
+        None => {
+            return String::from("127.0.0.1");
+        },
+    };
+    let ip = interface.ips[0].ip();
+    ip.to_string()
 }
