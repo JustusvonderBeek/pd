@@ -17,7 +17,7 @@ use crate::packets::*;
 use crate::utils::*;
 
 
-const TIMEOUT_MS : f64 = 1000.0;
+const TIMEOUT_MS : f64 = 2000.0;
 const INIT_TIMEOUT_MS : f64 = TIMEOUT_MS * 3.0;
 const START_FLOW_WINDOW : u16 = 8;
 const MAX_FLOW_WINDOW : u16 = 50;
@@ -545,6 +545,7 @@ impl TBDClient {
         // Copying the data at the right place into the buffer
         let start = (data.sequence_id - 1) as usize * DATA_SIZE as usize;
 
+        debug!("the file size is {} and offset is {}", self.file_size, self.offset);
         // Compute what is left after the last block received
         let remain = (self.file_size - self.offset) as usize;
         // Compute the size of the current block
@@ -558,7 +559,7 @@ impl TBDClient {
 
         let end = cmp::min(data.sequence_id as usize * DATA_SIZE, block_size);
         let p_size = end - start;
-        // debug!("Remain: {} Block size: {} Start: {} Size: {} End: {}", remain, block_size, start, p_size, end);
+        debug!("Remain: {} Block size: {} Start: {} Size: {} End: {}", remain, block_size, start, p_size, end);
 
         // Safety checks
         if start > buf.len() || end > buf.len() {
@@ -606,6 +607,7 @@ impl TBDClient {
 
     fn reset_client(&mut self) {
         self.received = 0;
+        self.offset = 0;
         self.flow_window = START_FLOW_WINDOW;
         self.congestion_window = START_FLOW_WINDOW;
         self.slow_start = true;
