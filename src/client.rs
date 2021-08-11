@@ -130,7 +130,7 @@ impl TBDClient {
                 }
                 
                 // Receive response from server
-                let (packet, len, _) = match get_next_packet(&sock, INIT_TIMEOUT_MS) {
+                let (packet, len, address) = match get_next_packet(&sock, INIT_TIMEOUT_MS) {
                     Ok(r) => r,
                     Err(_) => return Err(io::Error::new(io::ErrorKind::ConnectionReset, "Did not receive an answer")),
                 };
@@ -174,6 +174,7 @@ impl TBDClient {
                             req = true;
                             offset = 0;
                             hash = Vec::new();
+                            send_error(&sock, &self.connection_id, &address, ErrorTypes::Abort);
                             
                             // Request the same file again...
                             continue;
