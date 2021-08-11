@@ -71,7 +71,7 @@ impl TBDClient {
         // Bind to any local IP address (let the system assign one)
         // Try to rebind 3 times, then stop
 
-        let sock = match bind_to_socket(&String::from(&self.options.local_hostname), &self.options.client_port, 3) {
+        let mut sock = match bind_to_socket(&String::from(&self.options.local_hostname), &self.options.client_port, 3) {
             Ok(s) => s,
             Err(e) => return Err(e),
         };
@@ -191,7 +191,7 @@ impl TBDClient {
     
                         write_full_state(&self.offset, Some(&mut res.file_hash.to_vec()), &filename);
     
-                        self.receive_data(&sock);
+                        self.receive_data(&mut sock);
                     },
                     PacketType::Data => {
                         warn!("Ignore unrelated data packet!");
@@ -279,7 +279,7 @@ impl TBDClient {
         (iterations, window_size as usize)
     }
 
-    fn receive_data(&mut self, sock : &UdpSocket) {
+    fn receive_data(&mut self, sock : &mut UdpSocket) {
         'outer: loop {
             self.retransmission = false;
             let (iterations, window_size) = self.compute_block_params();
@@ -322,7 +322,7 @@ impl TBDClient {
         }
     }
 
-    fn receive(&mut self, sock : &UdpSocket, window_buffer : &mut Vec<u8>, list : LinkedList<u16>) -> Result<(), LinkedList<u16>> {
+    fn receive(&mut self, sock : &mut UdpSocket, window_buffer : &mut Vec<u8>, list : LinkedList<u16>) -> Result<(), LinkedList<u16>> {
         info!("Starting file transmission...");
 
         // Prepare working vars
@@ -347,12 +347,28 @@ impl TBDClient {
                     Ok(r) => r,
                     Err(None) => {
                         info!("Connection timed out! Starting retransmission...");
+                        let up = socket_up(sock);
+                        if !up {
+                            warn!("Socket is down! Rebinding an retrying");
+                            let ip = get_ip();
+                            *sock = match bind_to_socket(&ip, &self.options.client_port, 0) {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    warn!("Failed to rebind socket: {}", e);
+                                    break 'outer;
+                                },
+                            };
+                            warn!("Bound to new addr: {:?}", sock.local_addr());
+                        }
                         break 'outer;
                     },
                     Err(_) => { 
                         // Testing if socket is down
                         let up = socket_up(sock);
-                        error!("Socket is: {}", up);
+                        if !up {
+                            warn!("Socket is down! Rebinding an retrying");
+
+                        }
                         return Err(sid);
                     },
                 };
