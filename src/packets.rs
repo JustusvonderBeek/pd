@@ -523,7 +523,7 @@ mod tests {
         };
         let ser = ErrorPacket::serialize(&base.connection_id, 
             &base.block_id, &base.error_code);
-        let mut check : PacketType = get_packet_type_client(&ser, false);
+        let mut check : PacketType = get_packet_type_client(&ser);
         println!("{:?}", check);
         assert_eq!(check, PacketType::Error);
         let base : MetadataPacket = MetadataPacket{
@@ -535,7 +535,7 @@ mod tests {
         };
         let ser = MetadataPacket::serialize(&base.connection_id, 
             &base.block_id, &base.new_block_size);
-        check = get_packet_type_client(&ser, false);
+        check = get_packet_type_client(&ser);
         assert_eq!(check, PacketType::Metadata);
         let mut data : Vec<u8> = Vec::new();
         for i in 0..32 {
@@ -550,7 +550,7 @@ mod tests {
         };
         let ser = DataPacket::serialize(&base.connection_id, 
             &base.block_id, &base.sequence_id, &base.data);
-        check = get_packet_type_client(&ser, true);
+        check = get_packet_type_client(&ser);
         assert_eq!(check, PacketType::Data);
         let file_hash : [u8;32] = [0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,
             0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,
@@ -565,7 +565,7 @@ mod tests {
         };
         let ser = ResponsePacket::serialize(&base.connection_id, 
             &base.block_id, &base.file_hash, &base.file_size);
-            check = get_packet_type_client(&ser, false);
+            check = get_packet_type_client(&ser);
             assert_eq!(check, PacketType::Response);
     }
 
