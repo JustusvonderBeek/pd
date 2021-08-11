@@ -200,7 +200,7 @@ fn resolve_hostname(settings : &mut Options) {
             for ip in &interface.ips {
                 if ip.is_ipv6() {
                     settings.local_hostname.push_str("[");
-                    settings.local_hostname.push_str(&ip.to_string());
+                    settings.local_hostname.push_str(&ip.ip().to_string());
                     settings.local_hostname.push_str("]");
                     break;
                 }
