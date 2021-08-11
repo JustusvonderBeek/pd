@@ -93,6 +93,9 @@ impl ResponsePacket {
     pub fn deserialize(buffer : &[u8]) -> Result<ResponsePacket, &'static str> {
         if buffer.len() != 48 {
             debug!("Could not parse Response Packet. Had invalid length for parsing {:x} expected 48.", buffer.len());
+            for i in buffer{
+                debug!("Packet received was 0x{:x}", i);
+            }
             return Err("Parsing Response Packet");
         }
         let con_id : [u8; 4] = [0, buffer[0], buffer[1], buffer[2]];
@@ -255,7 +258,7 @@ impl MetadataPacket {
         let con_id_u8s = connection_id.to_be_bytes();
         let con_id = [con_id_u8s[1], con_id_u8s[2], con_id_u8s[3]];
         let mut buffer : Vec<u8> = Vec::with_capacity(MAX_PACKET_SIZE as usize);    // Memory usage might be higher with that capacity
-        let sequence_id : u32= 0x0;
+        let sequence_id : u16= 0x0;
         let fields : u8 = 0b00000000;
         buffer.extend_from_slice(&con_id);
         buffer.push(fields);
@@ -267,7 +270,7 @@ impl MetadataPacket {
 
     /// Parses a slice of u8 received over the network and returns a Metadata packet or Failure
     pub fn deserialize(buffer : &[u8]) -> Result<MetadataPacket, &'static str> {
-        if buffer.len() != 14{
+        if buffer.len() != 12{
             println!("Size was {}, expected 14.", buffer.len());
             return Err("Malformed metadata packet could not be parsed.");
         }
@@ -281,8 +284,8 @@ impl MetadataPacket {
             connection_id : connection_id,
             fields : buffer[3],
             block_id : BigEndian::read_u32(&buffer[4..8]),
-            sequence_id : BigEndian::read_u16(&buffer[8..12]),
-            new_block_size : BigEndian::read_u16(&buffer[12..14])
+            sequence_id : BigEndian::read_u16(&buffer[8..10]),
+            new_block_size : BigEndian::read_u16(&buffer[10..12])
         })
     }
 }
