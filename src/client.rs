@@ -84,6 +84,9 @@ impl TBDClient {
         let filenames = self.options.filename.clone();
 
         'outer: for filename in filenames {
+
+            // Resetting the vars
+            self.reset_client();
             self.filename = String::from(&filename);
 
             // Checking once per file for state information
@@ -596,6 +599,15 @@ impl TBDClient {
             write_state(&self.offset, &self.filename);
             return output.write_all(&data[0..slice_size]);
         }
+    }
+
+    fn reset_client(&mut self) {
+        self.received = 0;
+        self.flow_window = START_FLOW_WINDOW;
+        self.congestion_window = START_FLOW_WINDOW;
+        self.slow_start = true;
+        self.repair_mode = false;
+        self.retransmission = false;
     }
 
     fn sleep_n_ms(&self, ms : u64) {
